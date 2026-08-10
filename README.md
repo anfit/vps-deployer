@@ -2,6 +2,30 @@
 
 Manage isolated systemd deployments on existing Linux hosts over OpenSSH.
 
+## Repository layout
+
+Keep host identity separate from application deployment identity. Deployment
+files may be grouped recursively by application:
+
+```text
+infra/
+  hosts/
+    prod.yaml
+  deployments/
+    invoicer/
+      prod.yaml
+  globals/                 # optional; only genuinely shared non-secret values
+  artifacts/               # optional local release inputs
+```
+
+See [`examples/hosts/prod.yaml`](examples/hosts/prod.yaml) and
+[`examples/deployments/invoicer/prod.yaml`](examples/deployments/invoicer/prod.yaml).
+Ordinary configuration should be committed directly in a deployment. Use
+`from_global` only for values intentionally shared by multiple deployments, and
+use `secrets.from_env` only for secret material.
+
+## Commands
+
 ```console
 vps-deployer validate
 vps-deployer host inspect HOST
@@ -12,6 +36,13 @@ vps-deployer status DEPLOYMENT
 vps-deployer logs DEPLOYMENT
 vps-deployer rollback DEPLOYMENT
 vps-deployer remove DEPLOYMENT
+```
+
+Run from the infra repository, or select it explicitly:
+
+```console
+vps-deployer --repo ./examples validate
+vps-deployer --repo ./examples plan invoicer-prod
 ```
 
 `remove` stops and disables a deployment and removes its systemd unit and

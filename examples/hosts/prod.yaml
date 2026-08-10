@@ -2,5 +2,7 @@ name: prod
 ssh:
   host: prod-vps
   user: deploy
+  privileged_host: prod-vps
+  privileged_user: root
+  privileged_identity_file: ~/.ssh/prod-vps-deployer
 managed_root: /srv/vps-deployer
-
