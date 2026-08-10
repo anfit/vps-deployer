@@ -5,7 +5,7 @@ service:
   user: svc-invoicer
 
 release:
-  source: ../../artifacts/invoicer.tar.gz
+  source: ${PROJECTS_DIR}/vps-deployer/examples/artifacts/invoicer.tar.gz
 
 runtime:
   command: ./bin/invoicer
@@ -32,4 +32,3 @@ secrets:
 storage:
   data:
     path: /var/lib/invoicer
-

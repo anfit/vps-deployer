@@ -24,6 +24,17 @@ Ordinary configuration should be committed directly in a deployment. Use
 `from_global` only for values intentionally shared by multiple deployments, and
 use `secrets.from_env` only for secret material.
 
+Local artifact and include paths support explicit `${NAME}` environment roots.
+Unresolved variables and `..` traversal are rejected. For example:
+
+```yaml
+release:
+  source: ${PROJECTS_DIR}/my-service
+  include:
+    - source: ${VPS_DEPLOYER_DIR}/configs/my-service/prod.yaml
+      target: config/production.yaml
+```
+
 ## Commands
 
 ```console

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+import os
 import re
 from typing import Any
 
@@ -24,6 +25,24 @@ def safe_absolute(path: str, where: str) -> str:
     if not p.is_absolute() or ".." in p.parts or str(p) == "/":
         raise ConfigError(f"{where}: unsafe absolute path")
     return str(p)
+
+
+def local_path(value: str, base: Path, where: str) -> Path:
+    """Expand explicit environment roots and reject filesystem traversal."""
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        resolved = os.environ.get(name)
+        if resolved is None:
+            raise ConfigError(f"{where}: environment path variable {name} is not set")
+        return resolved
+
+    expanded = re.sub(r"\$\{([A-Z][A-Z0-9_]*)\}", replace, value)
+    if "$" in expanded:
+        raise ConfigError(f"{where}: invalid or unresolved path variable")
+    candidate = Path(expanded)
+    if ".." in candidate.parts:
+        raise ConfigError(f"{where}: path traversal is not allowed")
+    return (candidate if candidate.is_absolute() else base / candidate).resolve()
 
 
 @dataclass(frozen=True)
@@ -134,16 +153,13 @@ class Deployment:
         secrets = {str(k): ValueRef.parse(v, f"secrets.{k}", True) for k, v in (data.get("secrets") or {}).items()}
         stores = tuple(Storage(str(k), safe_absolute(str(v.get("path", "")), f"storage.{k}"))
                        for k, v in (data.get("storage") or {}).items() if isinstance(v, dict))
-        src = Path(str(_required(release, "source", source_name)))
-        if not src.is_absolute():
-            src = (path.parent / src).resolve()
+        src = local_path(str(_required(release, "source", source_name)), path.parent, f"{source_name}: release.source")
         includes: list[ReleaseInclude] = []
         for index, item in enumerate(release.get("include", []) or []):
             if not isinstance(item, dict):
                 raise ConfigError(f"{source_name}: release.include[{index}] must be a mapping")
-            include_source = Path(str(_required(item, "source", f"release.include[{index}]")))
-            if not include_source.is_absolute():
-                include_source = (path.parent / include_source).resolve()
+            include_source = local_path(str(_required(item, "source", f"release.include[{index}]")), path.parent,
+                                        f"{source_name}: release.include[{index}].source")
             target = str(_required(item, "target", f"release.include[{index}]"))
             target_path = PurePosixPath(target)
             if target_path.is_absolute() or ".." in target_path.parts or target in ("", "."):

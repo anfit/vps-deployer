@@ -80,6 +80,24 @@ def test_release_include_is_validated_and_affects_hash(tmp_path):
                           "runtime": {"command": "./run.sh"}}, tmp_path / "d.yaml")
 
 
+def test_local_paths_expand_roots_and_reject_traversal(tmp_path, monkeypatch):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path))
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": "${PROJECTS_DIR}/artifact"},
+                            "runtime": {"command": "./run.sh"}}, tmp_path / "d.yaml")
+    assert dep.source == artifact.resolve()
+    with pytest.raises(ConfigError, match="traversal"):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "${PROJECTS_DIR}/../secret"},
+                          "runtime": {"command": "./run.sh"}}, tmp_path / "d.yaml")
+    monkeypatch.delenv("PROJECTS_DIR")
+    with pytest.raises(ConfigError, match="is not set"):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "${PROJECTS_DIR}/artifact"},
+                          "runtime": {"command": "./run.sh"}}, tmp_path / "d.yaml")
+
+
 def test_secret_resolution_and_redacted_error(tmp_path, monkeypatch):
     dep = deployment(tmp_path)
     repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
