@@ -6,11 +6,13 @@ from pathlib import Path
 import shlex
 import tarfile
 import tempfile
+import fnmatch
 
 from .config import Repository
 from .models import ConfigError, Deployment, Host
 from .remote import RemoteHost
 from .systemd import render_unit, unit_name
+from .nginx import nginx_name, render_proxy
 
 
 @dataclass(frozen=True)
@@ -43,8 +45,18 @@ def content_hash(source: Path, includes=()) -> str:
 
 def _ignored(root: Path, path: Path) -> bool:
     ignored = {".git", ".venv", ".idea", "__pycache__", ".pytest_cache", ".env", "config.yaml"}
-    return any(part in ignored or "venv" in part.lower() or part.startswith(".test-") or
-               part.endswith((".egg-info", ".key", ".secret")) for part in path.relative_to(root).parts)
+    relative = path.relative_to(root)
+    if any(part in ignored or "venv" in part.lower() or part.startswith(".test-") or
+           part.endswith((".egg-info", ".key", ".secret")) for part in relative.parts):
+        return True
+    ignore_file = root / ".vps-deployer-ignore"
+    if ignore_file.is_file() and path != ignore_file:
+        patterns = (line.strip() for line in ignore_file.read_text(encoding="utf-8").splitlines())
+        return any(pattern and not pattern.startswith("#") and
+                   (fnmatch.fnmatch(relative.as_posix(), pattern) or
+                    fnmatch.fnmatch(relative.as_posix(), pattern.rstrip("/") + "/*"))
+                   for pattern in patterns)
+    return False
 
 
 def release_id(dep: Deployment, explicit: str | None = None) -> str:
@@ -61,6 +73,16 @@ def env_file(values: dict[str, str]) -> str:
     return "".join(f"{key}={shlex.quote(value)}\n" for key, value in sorted(values.items()))
 
 
+def env_matches(current: str, expected: dict[str, str], secret_keys: set[str], secrets_resolved: bool) -> bool:
+    if secrets_resolved or not secret_keys:
+        return current == env_file(expected)
+    current_lines = {line.split("=", 1)[0]: line + "\n" for line in current.splitlines() if "=" in line}
+    if set(current_lines) != set(expected):
+        return False
+    rendered = {key: env_file({key: value}) for key, value in expected.items() if key not in secret_keys}
+    return all(current_lines[key] == line for key, line in rendered.items())
+
+
 class Reconciler:
     def __init__(self, repo: Repository, dep: Deployment, remote: RemoteHost, release: str):
         self.repo, self.dep, self.remote, self.release = repo, dep, remote, release
@@ -69,21 +91,26 @@ class Reconciler:
         self.release_path = f"{self.base}/releases/{release}"
         self.unit_path = f"/etc/systemd/system/{unit_name(dep)}"
         self.env_path = f"/etc/vps-deployer/{dep.name}.env"
+        self.proxy_available = f"/etc/nginx/sites-available/{nginx_name(dep)}" if dep.http_proxy else None
+        self.proxy_enabled = f"/etc/nginx/sites-enabled/{nginx_name(dep)}" if dep.http_proxy else None
 
     def plan(self, require_secrets: bool = False) -> list[Action]:
-        values, _ = self.repo.resolve_environment(self.dep, require_secrets)
+        values, secret_keys = self.repo.resolve_environment(self.dep, require_secrets)
         actions: list[Action] = []
         if self.remote.run(["id", "-u", self.dep.user], check=False).returncode:
             actions.append(Action("CREATE", f"user {self.dep.user}"))
         for path in [self.base, *[s.path for s in self.dep.storage]]:
             if not self.remote.exists(path, sudo=True):
                 actions.append(Action("CREATE", path))
-        env_changed = self.remote.read(self.env_path, sudo=True) != env_file(values)
+        env_changed = not env_matches(self.remote.read(self.env_path, sudo=True), values, secret_keys, require_secrets)
         unit_changed = self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root)
         if env_changed:
             actions.append(Action("UPDATE", "environment file"))
         if unit_changed:
             actions.append(Action("UPDATE", "systemd unit"))
+        if self.dep.http_proxy and (self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep) or
+                                    not self.remote.exists(str(self.proxy_enabled), sudo=True)):
+            actions.append(Action("UPDATE", f"HTTP proxy {self.dep.http_proxy.domain}"))
         if not self.remote.exists(self.release_path, sudo=True):
             actions.append(Action("INSTALL", f"release {self.release}"))
         active = self.active_release()
@@ -143,6 +170,16 @@ class Reconciler:
             self.remote.run(["systemctl", "restart", unit_name(self.dep)], sudo=True)
             if not self._healthy():
                 raise RuntimeError("health check failed after configuration restart")
+        if self.dep.http_proxy:
+            proxy_changed = self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep)
+            if proxy_changed:
+                self._write_privileged(str(self.proxy_available), render_proxy(self.dep), "0644", "root:root")
+            if not self.remote.exists(str(self.proxy_enabled), sudo=True):
+                self.remote.run(["ln", "-s", str(self.proxy_available), str(self.proxy_enabled)], sudo=True)
+                proxy_changed = True
+            if proxy_changed:
+                self.remote.run(["nginx", "-t"], sudo=True)
+                self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
         return actions
 
     def _install_release(self) -> None:
@@ -199,6 +236,12 @@ class Reconciler:
         if self.remote.exists(self.env_path, sudo=True):
             actions.append(Action("REMOVE", "environment file"))
             self.remote.run(["rm", "-f", self.env_path], sudo=True)
+        if self.dep.http_proxy and (self.remote.exists(str(self.proxy_available), sudo=True) or
+                                    self.remote.exists(str(self.proxy_enabled), sudo=True)):
+            actions.append(Action("REMOVE", f"HTTP proxy {self.dep.http_proxy.domain}"))
+            self.remote.run(["rm", "-f", str(self.proxy_enabled), str(self.proxy_available)], sudo=True)
+            self.remote.run(["nginx", "-t"], sudo=True)
+            self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
         # Releases, writable storage and service users are intentionally retained.
         return actions
 

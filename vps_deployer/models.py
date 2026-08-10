@@ -101,6 +101,15 @@ class Storage:
 
 
 @dataclass(frozen=True)
+class HttpProxy:
+    name: str
+    domain: str
+    upstream: str
+    certificate: str
+    certificate_key: str
+
+
+@dataclass(frozen=True)
 class ReleaseInclude:
     source: Path
     target: str
@@ -121,6 +130,7 @@ class Deployment:
     environment: dict[str, ValueRef] = field(default_factory=dict)
     secrets: dict[str, ValueRef] = field(default_factory=dict)
     storage: tuple[Storage, ...] = ()
+    http_proxy: HttpProxy | None = None
     manifest_path: Path = Path()
 
     @classmethod
@@ -153,6 +163,21 @@ class Deployment:
         secrets = {str(k): ValueRef.parse(v, f"secrets.{k}", True) for k, v in (data.get("secrets") or {}).items()}
         stores = tuple(Storage(str(k), safe_absolute(str(v.get("path", "")), f"storage.{k}"))
                        for k, v in (data.get("storage") or {}).items() if isinstance(v, dict))
+        proxy_data = data.get("http_proxy")
+        proxy = None
+        if proxy_data is not None:
+            if not isinstance(proxy_data, dict):
+                raise ConfigError(f"{source_name}: http_proxy must be a mapping")
+            proxy_name = str(proxy_data.get("name", name))
+            domain = str(_required(proxy_data, "domain", source_name))
+            upstream = str(_required(proxy_data, "upstream", source_name))
+            if not SAFE_NAME.fullmatch(proxy_name):
+                raise ConfigError(f"{source_name}: invalid http_proxy.name")
+            if not re.fullmatch(r"[A-Za-z0-9.-]+", domain) or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", upstream):
+                raise ConfigError(f"{source_name}: invalid http_proxy route")
+            proxy = HttpProxy(proxy_name, domain, upstream,
+                              safe_absolute(str(_required(proxy_data, "certificate", source_name)), source_name),
+                              safe_absolute(str(_required(proxy_data, "certificate_key", source_name)), source_name))
         src = local_path(str(_required(release, "source", source_name)), path.parent, f"{source_name}: release.source")
         includes: list[ReleaseInclude] = []
         for index, item in enumerate(release.get("include", []) or []):
@@ -166,4 +191,4 @@ class Deployment:
                 raise ConfigError(f"{source_name}: unsafe release include target")
             includes.append(ReleaseInclude(include_source, target))
         return cls(name, str(_required(data, "host", source_name)), user, privileged, src, tuple(includes), command, wd, restart,
-                   data.get("healthcheck"), env, secrets, stores, path)
+                   data.get("healthcheck"), env, secrets, stores, proxy, path)

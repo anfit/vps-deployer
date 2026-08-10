@@ -4,9 +4,10 @@ import os
 import pytest
 
 from vps_deployer.config import Repository
-from vps_deployer.deployment import content_hash, env_file, select_rollback
+from vps_deployer.deployment import content_hash, env_file, env_matches, select_rollback
 from vps_deployer.models import ConfigError, Deployment, Host
 from vps_deployer.systemd import render_unit
+from vps_deployer.nginx import render_proxy
 
 
 def deployment(tmp_path: Path) -> Deployment:
@@ -46,6 +47,22 @@ def test_systemd_hardening_and_storage(tmp_path):
     assert "ExecStart=/srv/vps-deployer/demo-prod/current/app/bin/demo" in unit
 
 
+def test_http_proxy_is_rendered_per_deployment(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({
+        "name": "demo-dev", "host": "prod", "service": {"user": "svc-demo"},
+        "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"},
+        "http_proxy": {"name": "demo-dev", "domain": "dev.example.test",
+                       "upstream": "http://127.0.0.1:5101",
+                       "certificate": "/etc/ssl/dev/fullchain.pem",
+                       "certificate_key": "/etc/ssl/dev/privkey.pem"},
+    }, tmp_path / "dev.yaml")
+    rendered = render_proxy(dep)
+    assert "server_name dev.example.test;" in rendered
+    assert "proxy_pass http://127.0.0.1:5101;" in rendered
+    assert "ssl_certificate /etc/ssl/dev/fullchain.pem;" in rendered
+
+
 def test_content_hash_is_stable_and_content_sensitive(tmp_path):
     source = tmp_path / "a"; source.mkdir(); file = source / "x"; file.write_text("one")
     first = content_hash(source)
@@ -60,6 +77,15 @@ def test_content_hash_ignores_local_virtualenv(tmp_path):
     (source / ".venv").mkdir(); (source / ".venv" / "local-only").write_text("ignored")
     (source / "config.yaml").write_text("password: local-secret")
     (source / ".test-venv").mkdir(); (source / ".test-venv" / "python").write_text("ignored")
+    assert content_hash(source) == first
+
+
+def test_content_hash_honors_repository_ignore_file(tmp_path):
+    source = tmp_path / "a"; source.mkdir(); (source / "app.py").write_text("app")
+    (source / ".vps-deployer-ignore").write_text("local.properties\nhelpers/*\n")
+    first = content_hash(source)
+    (source / "local.properties").write_text("secret")
+    helpers = source / "helpers"; helpers.mkdir(); (helpers / "debug.py").write_text("local")
     assert content_hash(source) == first
 
 
@@ -109,6 +135,14 @@ def test_secret_resolution_and_redacted_error(tmp_path, monkeypatch):
     monkeypatch.delenv("DEMO_TOKEN")
     with pytest.raises(ConfigError) as exc: repo.resolve_environment(dep, True)
     assert "super-secret" not in str(exc.value)
+
+
+def test_redacted_plan_compares_secret_keys_without_secret_values():
+    current = "PORT=5101\nTOKEN=actual-secret\n"
+    expected = {"PORT": "5101", "TOKEN": "<secret>"}
+    assert env_matches(current, expected, {"TOKEN"}, False)
+    assert not env_matches(current, {**expected, "PORT": "5102"}, {"TOKEN"}, False)
+    assert not env_matches(current, {"PORT": "5101"}, set(), False)
 
 
 def test_rollback_selection():

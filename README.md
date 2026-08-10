@@ -24,6 +24,10 @@ Ordinary configuration should be committed directly in a deployment. Use
 `from_global` only for values intentionally shared by multiple deployments, and
 use `secrets.from_env` only for secret material.
 
+Multiple deployments may target the same host. An optional `http_proxy` block
+manages a deployment's nginx site, TLS certificate references, loopback upstream,
+configuration validation, and reload independently from other routes on that host.
+
 Local artifact and include paths support explicit `${NAME}` environment roots.
 Unresolved variables and `..` traversal are rejected. For example:
 
@@ -34,6 +38,11 @@ release:
     - source: ${VPS_DEPLOYER_DIR}/configs/my-service/prod.yaml
       target: config/production.yaml
 ```
+
+Directory artifacts may contain a `.vps-deployer-ignore` file with gitignore-like
+glob patterns. Matching developer-local files are excluded from both the release
+hash and uploaded archive; use it to prevent local credentials and helper files
+from entering managed releases.
 
 ## Commands
 
