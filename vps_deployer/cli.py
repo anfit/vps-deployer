@@ -19,9 +19,11 @@ def parser() -> argparse.ArgumentParser:
     val = sub.add_parser("validate"); val.add_argument("deployment", nargs="?")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
-    for name in ("plan", "apply", "status", "logs", "rollback"):
+    for name in ("plan", "apply", "status", "logs", "rollback", "remove"):
         cmd = sub.add_parser(name); cmd.add_argument("deployment")
         if name in ("plan", "apply"): cmd.add_argument("--release-id")
+        if name == "apply": cmd.add_argument("--allow-privileged", action="store_true")
+        if name == "remove": cmd.add_argument("--allow-privileged", action="store_true")
         if name == "logs":
             cmd.add_argument("--lines", type=int, default=100); cmd.add_argument("--since"); cmd.add_argument("--follow", action="store_true")
         if name == "rollback": cmd.add_argument("--release")
@@ -49,17 +51,34 @@ def run(args) -> int:
         if args.host not in repo.hosts: raise ConfigError(f"unknown host: {args.host}")
         host = repo.hosts[args.host]; remote = RemoteHost(host, args.verbose)
         if args.host_command == "inspect":
-            checks = [(["uname", "-s"], "linux"), (["uname", "-m"], "architecture"), (["systemctl", "--version"], "systemd"), (["sudo", "-n", "true"], "sudo"), (["sh", "-c", "command -v tar curl systemctl"], "commands")]
+            checks = [(["uname", "-s"], "linux"), (["uname", "-m"], "architecture"),
+                      (["systemctl", "--version"], "systemd"),
+                      (["sh", "-c", "command -v tar curl systemctl"], "commands")]
             print(f"host: {host.name}\nssh: connected")
             for argv, label in checks:
                 result = remote.run(argv, check=False); print(f"{label}: {result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout else 'unavailable'}")
+            privilege = remote.run(["test", "-e", "/srv/vps-deployer"], sudo=True, check=False)
+            print(f"privileged access: {'available' if privilege.returncode in (0, 1) else 'unavailable'}")
             print(f"managed root: {'present' if remote.exists(host.managed_root, True) else 'absent'}"); return 0
         remote.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
         print(f"Onboarded {host.name}"); return 0
     dep = _dep(repo, args.deployment); remote = _remote(repo, dep, args.verbose)
+    if args.command == "remove":
+        rec = Reconciler(repo, dep, remote, "remove")
+        actions = rec.remove(args.allow_privileged)
+        print(f"Deployment: {dep.name}\nHost: {dep.host}\n")
+        print("\n".join(map(str, actions)) if actions else "No changes.")
+        return 0
     if args.command in {"plan", "apply"}:
         rid = release_id(dep, args.release_id); reconciler = Reconciler(repo, dep, remote, rid)
-        actions = reconciler.plan(args.command == "apply") if args.command == "plan" else reconciler.apply()
+        if args.command == "plan":
+            actions = reconciler.plan(False)
+        elif dep.privileged:
+            if not args.allow_privileged:
+                raise ConfigError("privileged deployment requires --allow-privileged")
+            actions = reconciler.apply_privileged()
+        else:
+            actions = reconciler.apply()
         print(f"Deployment: {dep.name}\nHost: {dep.host}\n")
         print("\n".join(map(str, actions)) if actions else "No changes."); return 0
     unit = unit_name(dep); rec = Reconciler(repo, dep, remote, "status")

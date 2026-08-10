@@ -25,7 +25,7 @@ class Repository:
         for path in sorted((repo.root / "globals").glob("*.yaml")):
             raw = _yaml(path)
             repo.globals[path.stem] = {str(k): str(v) for k, v in raw.items()}
-        for path in sorted((repo.root / "deployments").glob("*.yaml")):
+        for path in sorted((repo.root / "deployments").rglob("*.yaml")):
             dep = Deployment.parse(_yaml(path), path)
             if dep.name in repo.deployments:
                 raise ConfigError(f"duplicate deployment: {dep.name}")
@@ -78,4 +78,3 @@ def _yaml(path: Path) -> dict:
     if not isinstance(data, dict):
         raise ConfigError(f"{path}: expected a mapping")
     return data
-

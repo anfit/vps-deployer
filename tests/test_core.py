@@ -28,12 +28,22 @@ def test_validation_rejects_unsafe_command(tmp_path):
                           "release": {"source": "x"}, "runtime": {"command": "/bin/sh"}}, tmp_path / "d.yaml")
 
 
+def test_root_requires_explicit_privileged_marker(tmp_path):
+    base = {"name": "root-demo", "host": "prod", "release": {"source": "x"},
+            "runtime": {"command": "./run.sh"}}
+    with pytest.raises(ConfigError):
+        Deployment.parse({**base, "service": {"user": "root"}}, tmp_path / "d.yaml")
+    dep = Deployment.parse({**base, "service": {"user": "root", "privileged": True}}, tmp_path / "d.yaml")
+    assert dep.privileged is True
+
+
 def test_systemd_hardening_and_storage(tmp_path):
     unit = render_unit(deployment(tmp_path), "/srv/vps-deployer")
     assert "User=svc-demo" in unit
     assert "ProtectSystem=strict" in unit
     assert "ReadWritePaths=/var/lib/demo" in unit
     assert "WorkingDirectory=/srv/vps-deployer/demo-prod/current/app" in unit
+    assert "ExecStart=/srv/vps-deployer/demo-prod/current/app/bin/demo" in unit
 
 
 def test_content_hash_is_stable_and_content_sensitive(tmp_path):
@@ -42,6 +52,13 @@ def test_content_hash_is_stable_and_content_sensitive(tmp_path):
     assert content_hash(source) == first
     file.write_text("two")
     assert content_hash(source) != first
+
+
+def test_content_hash_ignores_local_virtualenv(tmp_path):
+    source = tmp_path / "a"; source.mkdir(); (source / "app.py").write_text("app")
+    first = content_hash(source)
+    (source / ".venv").mkdir(); (source / ".venv" / "local-only").write_text("ignored")
+    assert content_hash(source) == first
 
 
 def test_secret_resolution_and_redacted_error(tmp_path, monkeypatch):
@@ -61,4 +78,3 @@ def test_rollback_selection():
     assert select_rollback(["003", "001", "002"], "003") == "002"
     assert select_rollback(["003", "001", "002"], "003", "001") == "001"
     with pytest.raises(ConfigError): select_rollback(["001"], "001")
-

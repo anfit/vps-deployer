@@ -26,7 +26,7 @@ def content_hash(source: Path) -> str:
     if not source.exists():
         raise ConfigError(f"artifact does not exist: {source}")
     digest = hashlib.sha256()
-    paths = [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file())
+    paths = [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file() and not _ignored(source, p))
     for path in paths:
         if source.is_dir():
             digest.update(path.relative_to(source).as_posix().encode())
@@ -34,6 +34,11 @@ def content_hash(source: Path) -> str:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
     return digest.hexdigest()[:7]
+
+
+def _ignored(root: Path, path: Path) -> bool:
+    ignored = {".git", ".venv", ".idea", "__pycache__", ".pytest_cache"}
+    return any(part in ignored or part.endswith(".egg-info") for part in path.relative_to(root).parts)
 
 
 def release_id(dep: Deployment, explicit: str | None = None) -> str:
@@ -67,15 +72,19 @@ class Reconciler:
         for path in [self.base, *[s.path for s in self.dep.storage]]:
             if not self.remote.exists(path, sudo=True):
                 actions.append(Action("CREATE", path))
-        if self.remote.read(self.env_path, sudo=True) != env_file(values):
+        env_changed = self.remote.read(self.env_path, sudo=True) != env_file(values)
+        unit_changed = self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root)
+        if env_changed:
             actions.append(Action("UPDATE", "environment file"))
-        if self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root):
+        if unit_changed:
             actions.append(Action("UPDATE", "systemd unit"))
         if not self.remote.exists(self.release_path, sudo=True):
             actions.append(Action("INSTALL", f"release {self.release}"))
         active = self.active_release()
         if active != self.release:
             actions.extend([Action("ACTIVATE", f"release {self.release}"), Action("RESTART", "service")])
+        elif env_changed or unit_changed:
+            actions.append(Action("RESTART", "service"))
         return actions
 
     def active_release(self) -> str | None:
@@ -89,10 +98,18 @@ class Reconciler:
         self.remote.run(["rm", "-f", temp])
 
     def apply(self) -> list[Action]:
+        if self.dep.privileged:
+            raise ConfigError("privileged deployment requires explicit allow_privileged=True")
+        return self._apply()
+
+    def apply_privileged(self) -> list[Action]:
+        return self._apply()
+
+    def _apply(self) -> list[Action]:
         values, _ = self.repo.resolve_environment(self.dep, True)
         actions = self.plan(True)
         self.remote.run(["mkdir", "-p", self.host.managed_root, "/etc/vps-deployer", f"{self.base}/releases"], sudo=True)
-        if self.remote.run(["id", "-u", self.dep.user], check=False).returncode:
+        if self.dep.user != "root" and self.remote.run(["id", "-u", self.dep.user], check=False).returncode:
             self.remote.run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", self.dep.user], sudo=True)
         for store in self.dep.storage:
             self.remote.run(["install", "-d", "-o", self.dep.user, "-g", self.dep.user, "-m", "0750", store.path], sudo=True)
@@ -116,6 +133,10 @@ class Reconciler:
                 self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/current"], sudo=True)
                 self.remote.run(["systemctl", "restart", unit_name(self.dep)], sudo=True)
                 raise RuntimeError("health check failed; previous release restored")
+        elif old_env != new_env or old_unit != new_unit:
+            self.remote.run(["systemctl", "restart", unit_name(self.dep)], sudo=True)
+            if not self._healthy():
+                raise RuntimeError("health check failed after configuration restart")
         return actions
 
     def _install_release(self) -> None:
@@ -127,7 +148,10 @@ class Reconciler:
             temp.close(); archive = Path(temp.name); cleanup = archive
             with tarfile.open(archive, "w:gz") as tar:
                 for item in self.dep.source.iterdir():
-                    tar.add(item, arcname=item.name)
+                    if not _ignored(self.dep.source, item):
+                        tar.add(item, arcname=item.name, filter=lambda info: None if any(
+                            part in {".git", ".venv", ".idea", "__pycache__", ".pytest_cache"} or part.endswith(".egg-info")
+                            for part in Path(info.name).parts) else info)
         else:
             archive = self.dep.source
         try:
@@ -136,6 +160,10 @@ class Reconciler:
             self.remote.run(["tar", "-xzf", upload, "-C", self.release_path], sudo=True)
             self.remote.run(["chown", "-R", f"root:{self.dep.user}", self.release_path], sudo=True)
             self.remote.run(["chmod", "-R", "u=rwX,g=rX,o=", self.release_path], sudo=True)
+            executable = shlex.split(self.dep.command)[0][2:]
+            if self.dep.working_directory != ".":
+                executable = f"{self.dep.working_directory}/{executable}"
+            self.remote.run(["chmod", "0750", f"{self.release_path}/{executable}"], sudo=True)
             self.remote.run(["rm", "-f", upload])
         finally:
             if cleanup: cleanup.unlink(missing_ok=True)
@@ -148,6 +176,22 @@ class Reconciler:
             raise ConfigError("only http health checks are supported")
         return self.remote.run(["curl", "--fail", "--silent", "--show-error", "--max-time", "10",
                                 "--retry", "5", "--retry-delay", "2", "--retry-connrefused", str(hc["url"])], check=False).returncode == 0
+
+    def remove(self, allow_privileged: bool = False) -> list[Action]:
+        if self.dep.privileged and not allow_privileged:
+            raise ConfigError("privileged deployment removal requires --allow-privileged")
+        actions: list[Action] = []
+        if self.remote.exists(self.unit_path, sudo=True):
+            actions.append(Action("REMOVE", "systemd unit"))
+            self.remote.run(["systemctl", "disable", "--now", unit_name(self.dep)], sudo=True, check=False)
+            self.remote.run(["rm", "-f", self.unit_path], sudo=True)
+            self.remote.run(["systemctl", "daemon-reload"], sudo=True)
+            self.remote.run(["systemctl", "reset-failed"], sudo=True, check=False)
+        if self.remote.exists(self.env_path, sudo=True):
+            actions.append(Action("REMOVE", "environment file"))
+            self.remote.run(["rm", "-f", self.env_path], sudo=True)
+        # Releases, writable storage and service users are intentionally retained.
+        return actions
 
 
 def select_rollback(releases: list[str], current: str, requested: str | None = None) -> str:

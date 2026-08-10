@@ -12,7 +12,10 @@ def render_unit(deployment: Deployment, managed_root: str) -> str:
     base = f"{managed_root}/{deployment.name}/current"
     working = base if deployment.working_directory == "." else f"{base}/{deployment.working_directory}"
     writable = "\n".join(f"ReadWritePaths={s.path}" for s in deployment.storage)
-    command = " ".join(shlex.quote(x) for x in shlex.split(deployment.command))
+    command_parts = shlex.split(deployment.command)
+    if command_parts[0].startswith("./"):
+        command_parts[0] = f"{working}/{command_parts[0][2:]}"
+    command = " ".join(shlex.quote(x) for x in command_parts)
     return f"""[Unit]
 Description=vps-deployer service {deployment.name}
 After=network-online.target
@@ -35,4 +38,3 @@ ProtectSystem=strict
 [Install]
 WantedBy=multi-user.target
 """
-

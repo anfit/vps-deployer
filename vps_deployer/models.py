@@ -30,6 +30,9 @@ def safe_absolute(path: str, where: str) -> str:
 class SSHConfig:
     host: str
     user: str | None = None
+    privileged_host: str | None = None
+    privileged_user: str | None = None
+    privileged_identity_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,7 +49,10 @@ class Host:
         ssh = _required(data, "ssh", source)
         if not isinstance(ssh, dict):
             raise ConfigError(f"{source}: ssh must be a mapping")
-        return cls(name, SSHConfig(str(_required(ssh, "host", source)), str(ssh["user"]) if ssh.get("user") else None),
+        return cls(name, SSHConfig(str(_required(ssh, "host", source)), str(ssh["user"]) if ssh.get("user") else None,
+                                   str(ssh["privileged_host"]) if ssh.get("privileged_host") else None,
+                                   str(ssh["privileged_user"]) if ssh.get("privileged_user") else None,
+                                   str(ssh["privileged_identity_file"]) if ssh.get("privileged_identity_file") else None),
                    safe_absolute(str(data.get("managed_root", "/srv/vps-deployer")), source))
 
 
@@ -80,6 +86,7 @@ class Deployment:
     name: str
     host: str
     user: str
+    privileged: bool
     source: Path
     command: str
     working_directory: str = "."
@@ -102,7 +109,10 @@ class Deployment:
         if not all(isinstance(x, dict) for x in (service, release, runtime)):
             raise ConfigError(f"{source_name}: service, release and runtime must be mappings")
         user = str(_required(service, "user", source_name))
-        if not SAFE_USER.fullmatch(user) or user == "root":
+        privileged = service.get("privileged", False)
+        if not isinstance(privileged, bool):
+            raise ConfigError(f"{source_name}: service.privileged must be boolean")
+        if not SAFE_USER.fullmatch(user) or (user == "root" and not privileged) or (privileged and user != "root"):
             raise ConfigError(f"{source_name}: invalid service user")
         command = str(_required(runtime, "command", source_name)).strip()
         if not command.startswith("./") or ".." in PurePosixPath(command.split()[0]).parts:
@@ -120,6 +130,5 @@ class Deployment:
         src = Path(str(_required(release, "source", source_name)))
         if not src.is_absolute():
             src = (path.parent / src).resolve()
-        return cls(name, str(_required(data, "host", source_name)), user, src, command, wd, restart,
+        return cls(name, str(_required(data, "host", source_name)), user, privileged, src, command, wd, restart,
                    data.get("healthcheck"), env, secrets, stores, path)
-
