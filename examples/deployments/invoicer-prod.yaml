@@ -1,0 +1,24 @@
+name: invoicer-prod
+host: prod
+service:
+  user: svc-invoicer
+release:
+  source: ../artifacts/invoicer.tar.gz
+runtime:
+  command: ./bin/invoicer
+  working_directory: app
+  restart: always
+healthcheck:
+  type: http
+  url: http://127.0.0.1:8104/health
+environment:
+  APP_ENV: production
+  TZ:
+    from_global: TZ
+secrets:
+  DATABASE_URL:
+    from_env: INVOICER_PROD_DATABASE_URL
+storage:
+  data:
+    path: /var/lib/invoicer
+

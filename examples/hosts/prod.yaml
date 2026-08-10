@@ -1,0 +1,6 @@
+name: prod
+ssh:
+  host: prod-vps
+  user: deploy
+managed_root: /srv/vps-deployer
+

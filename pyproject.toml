@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vps-deployer"
+version = "0.1.0"
+description = "Manage isolated systemd deployments on existing VPS hosts over SSH"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+vps-deployer = "vps_deployer.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

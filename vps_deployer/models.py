@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
+import re
+from typing import Any
+
+SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def _required(data: dict[str, Any], key: str, where: str) -> Any:
+    if key not in data or data[key] in (None, ""):
+        raise ConfigError(f"{where}: missing required field {key}")
+    return data[key]
+
+
+def safe_absolute(path: str, where: str) -> str:
+    p = PurePosixPath(path)
+    if not p.is_absolute() or ".." in p.parts or str(p) == "/":
+        raise ConfigError(f"{where}: unsafe absolute path")
+    return str(p)
+
+
+@dataclass(frozen=True)
+class SSHConfig:
+    host: str
+    user: str | None = None
+
+
+@dataclass(frozen=True)
+class Host:
+    name: str
+    ssh: SSHConfig
+    managed_root: str = "/srv/vps-deployer"
+
+    @classmethod
+    def parse(cls, data: dict[str, Any], source: str) -> "Host":
+        name = str(_required(data, "name", source))
+        if not SAFE_NAME.fullmatch(name):
+            raise ConfigError(f"{source}: invalid host name")
+        ssh = _required(data, "ssh", source)
+        if not isinstance(ssh, dict):
+            raise ConfigError(f"{source}: ssh must be a mapping")
+        return cls(name, SSHConfig(str(_required(ssh, "host", source)), str(ssh["user"]) if ssh.get("user") else None),
+                   safe_absolute(str(data.get("managed_root", "/srv/vps-deployer")), source))
+
+
+@dataclass(frozen=True)
+class ValueRef:
+    literal: str | None = None
+    from_global: str | None = None
+    from_env: str | None = None
+
+    @classmethod
+    def parse(cls, value: Any, where: str, secret: bool = False) -> "ValueRef":
+        if isinstance(value, (str, int, float, bool)) and not secret:
+            return cls(literal=str(value))
+        if not isinstance(value, dict):
+            raise ConfigError(f"{where}: expected a reference mapping")
+        allowed = {"from_env"} if secret else {"from_global"}
+        keys = set(value)
+        if len(keys) != 1 or not keys <= allowed:
+            raise ConfigError(f"{where}: invalid reference")
+        return cls(from_global=value.get("from_global"), from_env=value.get("from_env"))
+
+
+@dataclass(frozen=True)
+class Storage:
+    name: str
+    path: str
+
+
+@dataclass(frozen=True)
+class Deployment:
+    name: str
+    host: str
+    user: str
+    source: Path
+    command: str
+    working_directory: str = "."
+    restart: str = "always"
+    healthcheck: dict[str, Any] | None = None
+    environment: dict[str, ValueRef] = field(default_factory=dict)
+    secrets: dict[str, ValueRef] = field(default_factory=dict)
+    storage: tuple[Storage, ...] = ()
+    manifest_path: Path = Path()
+
+    @classmethod
+    def parse(cls, data: dict[str, Any], path: Path) -> "Deployment":
+        source_name = str(path)
+        name = str(_required(data, "name", source_name))
+        if not SAFE_NAME.fullmatch(name):
+            raise ConfigError(f"{source_name}: invalid deployment name")
+        service = _required(data, "service", source_name)
+        release = _required(data, "release", source_name)
+        runtime = _required(data, "runtime", source_name)
+        if not all(isinstance(x, dict) for x in (service, release, runtime)):
+            raise ConfigError(f"{source_name}: service, release and runtime must be mappings")
+        user = str(_required(service, "user", source_name))
+        if not SAFE_USER.fullmatch(user) or user == "root":
+            raise ConfigError(f"{source_name}: invalid service user")
+        command = str(_required(runtime, "command", source_name)).strip()
+        if not command.startswith("./") or ".." in PurePosixPath(command.split()[0]).parts:
+            raise ConfigError(f"{source_name}: runtime command must be relative to the release")
+        wd = str(runtime.get("working_directory", "."))
+        if PurePosixPath(wd).is_absolute() or ".." in PurePosixPath(wd).parts:
+            raise ConfigError(f"{source_name}: unsafe working_directory")
+        restart = str(runtime.get("restart", "always"))
+        if restart not in {"always", "on-failure", "no"}:
+            raise ConfigError(f"{source_name}: invalid restart policy")
+        env = {str(k): ValueRef.parse(v, f"environment.{k}") for k, v in (data.get("environment") or {}).items()}
+        secrets = {str(k): ValueRef.parse(v, f"secrets.{k}", True) for k, v in (data.get("secrets") or {}).items()}
+        stores = tuple(Storage(str(k), safe_absolute(str(v.get("path", "")), f"storage.{k}"))
+                       for k, v in (data.get("storage") or {}).items() if isinstance(v, dict))
+        src = Path(str(_required(release, "source", source_name)))
+        if not src.is_absolute():
+            src = (path.parent / src).resolve()
+        return cls(name, str(_required(data, "host", source_name)), user, src, command, wd, restart,
+                   data.get("healthcheck"), env, secrets, stores, path)
+
