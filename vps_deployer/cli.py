@@ -102,8 +102,9 @@ def run(args) -> int:
         if args.since: argv += ["--since", args.since]
         if args.follow: argv += ["--follow"]
         result = remote.run(argv, sudo=True, check=False); print(result.stdout, end=""); return result.returncode
-    listing = remote.run(["find", f"{repo.hosts[dep.host].managed_root}/{dep.name}/releases", "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-printf", "%f\\n"], sudo=True)
-    current = rec.active_release(); target = select_rollback(listing.stdout.splitlines(), str(current), args.release)
+    listing = remote.run(["find", f"{repo.hosts[dep.host].managed_root}/{dep.name}/releases", "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print"], sudo=True)
+    releases = [Path(path).name for path in listing.stdout.splitlines()]
+    current = rec.active_release(); target = select_rollback(releases, str(current), args.release)
     remote.run(["ln", "-sfn", f"releases/{target}", f"{rec.base}/current"], sudo=True); remote.run(["systemctl", "restart", unit], sudo=True)
     print(f"Rolled back {dep.name} to {target}"); return 0
 

@@ -4,7 +4,8 @@ import os
 import pytest
 
 from vps_deployer.config import Repository
-from vps_deployer.deployment import content_hash, env_file, env_matches, git_metadata, select_rollback
+from vps_deployer.deployment import (content_hash, env_file, env_matches, git_metadata,
+                                     releases_to_prune, select_rollback)
 from vps_deployer.models import ConfigError, Deployment, Host
 from vps_deployer.systemd import render_unit
 from vps_deployer.nginx import render_proxy
@@ -192,3 +193,11 @@ def test_rollback_selection():
     assert select_rollback(["003", "001", "002"], "003") == "002"
     assert select_rollback(["003", "001", "002"], "003", "001") == "001"
     with pytest.raises(ConfigError): select_rollback(["001"], "001")
+
+
+def test_release_pruning_keeps_active_and_immediate_predecessor():
+    assert releases_to_prune(["new", "previous", "old", "oldest"], "new", "previous") == ["old", "oldest"]
+
+
+def test_release_pruning_ignores_unsafe_directory_names():
+    assert releases_to_prune(["new", "previous", "../state", "bad/name"], "new", "previous") == []

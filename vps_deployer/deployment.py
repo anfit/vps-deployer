@@ -7,6 +7,7 @@ import shlex
 import tarfile
 import tempfile
 import fnmatch
+import re
 import subprocess
 from datetime import datetime, timezone
 
@@ -113,6 +114,13 @@ def env_matches(current: str | None, expected: dict[str, str], secret_keys: set[
     return all(current_lines[key] == line for key, line in rendered.items())
 
 
+def releases_to_prune(releases: list[str], current: str, previous: str) -> list[str]:
+    """Return valid release directories older than the rollback boundary."""
+    valid = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    return sorted({release for release in releases
+                   if valid.fullmatch(release) and release not in {current, previous}})
+
+
 class Reconciler:
     def __init__(self, repo: Repository, dep: Deployment, remote: RemoteHost, release: str):
         self.repo, self.dep, self.remote, self.release = repo, dep, remote, release
@@ -210,7 +218,19 @@ class Reconciler:
             if proxy_changed:
                 self.remote.run(["nginx", "-t"], sudo=True)
                 self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
+        # Prune only after the whole activation (including proxy reconciliation)
+        # succeeded. The prior active release is retained as the rollback target.
+        if previous and previous != self.release:
+            self._prune_releases(previous)
         return actions
+
+    def _prune_releases(self, previous: str) -> None:
+        releases_path = f"{self.base}/releases"
+        listing = self.remote.run(["find", releases_path, "-mindepth", "1", "-maxdepth", "1",
+                                   "-type", "d", "-print"], sudo=True)
+        releases = [Path(path).name for path in listing.stdout.splitlines()]
+        for release in releases_to_prune(releases, self.release, previous):
+            self.remote.run(["rm", "-rf", f"{releases_path}/{release}"], sudo=True)
 
     def _install_release(self) -> None:
         upload = f"/tmp/vps-deployer-{self.dep.name}-{self.release}.tar.gz"
@@ -281,7 +301,7 @@ class Reconciler:
             self.remote.run(["rm", "-f", str(self.proxy_enabled), str(self.proxy_available)], sudo=True)
             self.remote.run(["nginx", "-t"], sudo=True)
             self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
-        # Releases, writable storage and service users are intentionally retained.
+        # The active and rollback releases, writable storage, and service users are retained.
         return actions
 
 

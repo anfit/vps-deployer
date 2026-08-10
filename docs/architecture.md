@@ -10,7 +10,7 @@ runtime configuration, routing, storage, and secret references.
 - The application repository owns executable code and its managed start script.
 - The infrastructure repository owns hosts and deployment manifests.
 - The operator environment owns secret values and local repository roots.
-- The remote host owns persistent runtime data, TLS keys, and release history.
+- The remote host owns persistent runtime data, TLS keys, and the retained rollback release.
 - `vps-deployer` owns generated systemd units, environment files, release trees,
   active-release symlinks, and declared nginx sites.
 
@@ -63,7 +63,9 @@ A running service with a missing or stale manifest is reported unhealthy.
 An apply uploads a new release only when its release ID is absent. It writes the
 environment and unit, activates the new symlink, restarts the service, and runs
 the health check. If activation fails and a previous release exists, the symlink
-is restored and the previous service is restarted.
+is restored and the previous service is restarted. After the complete deployment
+succeeds, older releases are deleted; only the active release and its immediate
+predecessor remain. Cleanup never runs after a failed activation.
 
 Nginx configuration is validated before reload. Each deployment reconciles only
 its declared proxy file, allowing several environments to share one VPS safely.

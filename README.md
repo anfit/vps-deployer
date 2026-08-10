@@ -69,7 +69,9 @@ Every release receives a generated `build.properties` manifest. It records the
 release ID, exact Git commit and commit time when available, source branch,
 deployment time, and deployer identity without modifying the checkout. `status`
 checks the active manifest against the desired release and commit; stale or
-missing metadata makes the deployment unhealthy.
+missing metadata makes the deployment unhealthy. After a successful activation,
+the active release and its immediate predecessor are retained for rollback; older
+release directories are pruned. Failed deployments do not trigger cleanup.
 
 ## Commands
 
