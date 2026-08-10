@@ -29,6 +29,10 @@ def test_validation_rejects_unsafe_command(tmp_path):
                           "release": {"source": "x"}, "runtime": {"command": "/bin/sh"}}, tmp_path / "d.yaml")
 
 
+def test_missing_environment_file_never_matches():
+    assert env_matches(None, {"TOKEN": "redacted"}, {"TOKEN"}, False) is False
+
+
 def test_root_requires_explicit_privileged_marker(tmp_path):
     base = {"name": "root-demo", "host": "prod", "release": {"source": "x"},
             "runtime": {"command": "./run.sh"}}

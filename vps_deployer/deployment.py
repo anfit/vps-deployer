@@ -101,7 +101,9 @@ def env_file(values: dict[str, str]) -> str:
     return "".join(f"{key}={shlex.quote(value)}\n" for key, value in sorted(values.items()))
 
 
-def env_matches(current: str, expected: dict[str, str], secret_keys: set[str], secrets_resolved: bool) -> bool:
+def env_matches(current: str | None, expected: dict[str, str], secret_keys: set[str], secrets_resolved: bool) -> bool:
+    if current is None:
+        return False
     if secrets_resolved or not secret_keys:
         return current == env_file(expected)
     current_lines = {line.split("=", 1)[0]: line + "\n" for line in current.splitlines() if "=" in line}
