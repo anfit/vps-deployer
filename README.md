@@ -47,7 +47,7 @@ Unresolved variables and `..` traversal are rejected. For example:
 release:
   source: ${PROJECTS_DIR}/my-service
   include:
-    - source: ${VPS_DEPLOYER_DIR}/configs/my-service/prod.yaml
+    - source: ${SERVICE_INFRA_DIR}/configs/my-service/prod.yaml
       target: config/production.yaml
 ```
 

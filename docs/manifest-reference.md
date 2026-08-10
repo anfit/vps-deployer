@@ -41,7 +41,7 @@ service:
 release:
   source: ${PROJECTS_DIR}/example
   include:
-    - source: ${VPS_DEPLOYER_DIR}/configs/example/prod.yaml
+    - source: ${SERVICE_INFRA_DIR}/configs/example/prod.yaml
       target: config/production.yaml
 
 runtime:

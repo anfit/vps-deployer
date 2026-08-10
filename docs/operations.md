@@ -3,16 +3,16 @@
 Examples use PowerShell and an explicit infrastructure repository.
 
 ```powershell
-$infra = Join-Path $env:PROJECTS_DIR 'service-infra'
-$deployer = '.\.venv\Scripts\vps-deployer.exe'  # from the vps-deployer checkout
+$infra = $env:SERVICE_INFRA_DIR
+$deployer = Join-Path $env:VPS_DEPLOYER_DIR '.venv\Scripts\vps-deployer.exe'
 ```
 
 ## Local prerequisites
 
 - Python environment containing `vps-deployer` and PyYAML.
 - OpenSSH client with non-interactive access to each host.
-- Persistent User environment roots such as `PROJECTS_DIR` and
-  `VPS_DEPLOYER_DIR`.
+- Persistent User environment roots: `PROJECTS_DIR`, `VPS_DEPLOYER_DIR`, and
+  `SERVICE_INFRA_DIR`.
 - Required deployment secrets in the current process environment. A new terminal
   is normally required after changing persistent Windows User variables.
 
