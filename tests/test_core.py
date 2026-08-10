@@ -4,7 +4,7 @@ import os
 import pytest
 
 from vps_deployer.config import Repository
-from vps_deployer.deployment import content_hash, env_file, env_matches, select_rollback
+from vps_deployer.deployment import content_hash, env_file, env_matches, git_metadata, select_rollback
 from vps_deployer.models import ConfigError, Deployment, Host
 from vps_deployer.systemd import render_unit
 from vps_deployer.nginx import render_proxy
@@ -143,6 +143,20 @@ def test_redacted_plan_compares_secret_keys_without_secret_values():
     assert env_matches(current, expected, {"TOKEN"}, False)
     assert not env_matches(current, {**expected, "PORT": "5102"}, {"TOKEN"}, False)
     assert not env_matches(current, {"PORT": "5101"}, set(), False)
+
+
+def test_git_build_metadata_records_exact_revision(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@example.invalid"], check=True)
+    (tmp_path / "app.py").write_text("app")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "app.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "test"], check=True)
+    commit, rendered = git_metadata(tmp_path, "release-123")
+    assert f"commit.hash={commit}" in rendered
+    assert "release.id=release-123" in rendered
+    assert "build.user=vps-deployer" in rendered
 
 
 def test_rollback_selection():

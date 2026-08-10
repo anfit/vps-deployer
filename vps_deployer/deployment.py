@@ -7,6 +7,8 @@ import shlex
 import tarfile
 import tempfile
 import fnmatch
+import subprocess
+from datetime import datetime, timezone
 
 from .config import Repository
 from .models import ConfigError, Deployment, Host
@@ -22,6 +24,27 @@ class Action:
 
     def __str__(self) -> str:
         return f"{self.verb} {self.subject}"
+
+
+def git_metadata(source: Path, release: str, build_time: datetime | None = None) -> tuple[str | None, str]:
+    def git(*args: str) -> str:
+        result = subprocess.run(["git", "-C", str(source), *args], text=True, capture_output=True)
+        if result.returncode:
+            raise ConfigError(f"could not read Git metadata from {source}")
+        return result.stdout.strip()
+    try:
+        commit = git("rev-parse", "HEAD")
+        committed = git("show", "-s", "--format=%cI", commit)
+        branch = git("branch", "--show-current") or "detached"
+    except (ConfigError, FileNotFoundError):
+        commit = None; committed = ""; branch = "unversioned"
+    built = (build_time or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    content = f"release.id={release}\n"
+    if commit:
+        content += f"commit.hash={commit}\ncommit.timestamp={committed}\n"
+    content += (f"build.timestamp={built}\nbuild.branch={branch}\n"
+                f"build.user=vps-deployer\n")
+    return commit, content
 
 
 def content_hash(source: Path, includes=()) -> str:
@@ -40,6 +63,11 @@ def content_hash(source: Path, includes=()) -> str:
             raise ConfigError(f"release include does not exist or is not a file: {include.source}")
         digest.update(include.target.encode())
         digest.update(include.source.read_bytes())
+    metadata_source = source if source.is_dir() else source.parent
+    commit, _ = git_metadata(metadata_source, "pending")
+    if commit:
+        digest.update(b"git-commit")
+        digest.update(commit.encode())
     return digest.hexdigest()[:7]
 
 
@@ -191,6 +219,8 @@ class Reconciler:
             temp.close(); archive = Path(temp.name); cleanup = archive
             with tarfile.open(archive, "w:gz") as tar:
                 for item in self.dep.source.iterdir():
+                    if item.relative_to(self.dep.source).as_posix() == "build.properties":
+                        continue
                     if not _ignored(self.dep.source, item):
                         tar.add(item, arcname=item.name, filter=lambda info: None if _ignored(
                             self.dep.source, self.dep.source / Path(info.name)) else info)
@@ -206,6 +236,9 @@ class Reconciler:
             self.remote.run(["tar", "-xzf", upload, "-C", self.release_path], sudo=True)
             self.remote.run(["chown", "-R", f"root:{self.dep.user}", self.release_path], sudo=True)
             self.remote.run(["chmod", "-R", "u=rwX,g=rX,o=", self.release_path], sudo=True)
+            metadata_source = self.dep.source if self.dep.source.is_dir() else self.dep.source.parent
+            _, metadata = git_metadata(metadata_source, self.release)
+            self._write_privileged(f"{self.release_path}/build.properties", metadata, "0640", f"root:{self.dep.user}")
             executable = shlex.split(self.dep.command)[0][2:]
             if self.dep.working_directory != ".":
                 executable = f"{self.dep.working_directory}/{executable}"
@@ -213,6 +246,10 @@ class Reconciler:
             self.remote.run(["rm", "-f", upload])
         finally:
             if cleanup: cleanup.unlink(missing_ok=True)
+
+    def release_manifest(self) -> dict[str, str]:
+        content = self.remote.read(f"{self.base}/current/build.properties", sudo=True)
+        return dict(line.split("=", 1) for line in content.splitlines() if "=" in line)
 
     def _healthy(self) -> bool:
         hc = self.dep.healthcheck

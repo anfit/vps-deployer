@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from .config import Repository
-from .deployment import Reconciler, release_id, select_rollback
+from .deployment import Reconciler, git_metadata, release_id, select_rollback
 from .models import ConfigError
 from .remote import RemoteError, RemoteHost
 from .systemd import unit_name
@@ -85,11 +85,18 @@ def run(args) -> int:
     if args.command == "status":
         active = rec.active_release(); service = remote.run(["systemctl", "is-active", unit], sudo=True, check=False)
         desired = release_id(dep)
-        health = "healthy" if service.returncode == 0 and rec._healthy() else "unhealthy"
+        manifest = rec.release_manifest() if active else {}
+        metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
+        desired_commit, _ = git_metadata(metadata_source, desired)
+        manifest_ok = manifest.get("release.id") == desired and (not desired_commit or manifest.get("commit.hash") == desired_commit)
+        healthy = service.returncode == 0 and rec._healthy() and manifest_ok
+        health = "healthy" if healthy else "unhealthy"
         print(f"deployment: {dep.name}\nhost: {dep.host}\nservice: {service.stdout.strip() or 'unknown'}\n"
               f"desired release: {desired}\nactive release: {active or 'none'}\nhealth: {health}\nuser: {dep.user}")
+        print(f"desired commit: {desired_commit or 'unversioned'}\nactive commit: {manifest.get('commit.hash', 'missing')}\n"
+              f"manifest: {'current' if manifest_ok else 'stale or missing'}")
         if service.returncode: print(remote.run(["systemctl", "status", unit, "--no-pager", "--lines=20"], sudo=True, check=False).stdout)
-        return service.returncode
+        return 0 if healthy else 1
     if args.command == "logs":
         argv = ["journalctl", "-u", unit, "--no-pager", "-n", str(args.lines)]
         if args.since: argv += ["--since", args.since]

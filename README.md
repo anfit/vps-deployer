@@ -44,6 +44,12 @@ glob patterns. Matching developer-local files are excluded from both the release
 hash and uploaded archive; use it to prevent local credentials and helper files
 from entering managed releases.
 
+Every release receives a generated `build.properties` manifest. It records the
+release ID, exact Git commit and commit time when available, source branch,
+deployment time, and deployer identity without modifying the checkout. `status`
+checks the active manifest against the desired release and commit; stale or
+missing metadata makes the deployment unhealthy.
+
 ## Commands
 
 ```console
