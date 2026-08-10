@@ -12,9 +12,10 @@ import sys
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:@%+=,/ -]+$")
 SAFE_UNIT = re.compile(r"^vps-deployer-[a-z][a-z0-9-]{0,62}\.service$")
-ALLOWED_COMMANDS = {"cat", "chmod", "chown", "find", "install", "ln", "mkdir", "readlink", "rm",
+ALLOWED_COMMANDS = {"cat", "chmod", "chown", "find", "install", "ln", "mkdir", "nginx", "readlink", "rm",
                     "systemctl", "tar", "test", "useradd"}
-PATH_ROOTS = ("/srv/vps-deployer", "/etc/vps-deployer", "/var/lib/", "/tmp/vps-deployer-")
+PATH_ROOTS = ("/srv/vps-deployer", "/etc/vps-deployer", "/etc/nginx/sites-available/",
+              "/etc/nginx/sites-enabled/", "/var/lib/", "/tmp/vps-deployer-")
 
 
 def allowed_path(value: str) -> bool:
@@ -33,11 +34,17 @@ def validate(argv: list[str]) -> None:
     if argv[0] == "systemctl":
         if argv[1:] in (["daemon-reload"], ["reset-failed"]):
             return
+        if argv[1:] == ["reload", "nginx"]:
+            return
         if len(argv) >= 3 and argv[1] in {"enable", "disable", "restart", "start", "stop", "status", "is-active"}:
             units = [x for x in argv[2:] if not x.startswith("-")]
             if units and all(SAFE_UNIT.fullmatch(x) for x in units):
                 return
         raise ValueError("systemctl operation is not allowed")
+    if argv[0] == "nginx":
+        if argv[1:] == ["-t"]:
+            return
+        raise ValueError("nginx operation is not allowed")
     if argv[0] == "useradd":
         if len(argv) >= 2 and re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", argv[-1]) and argv[-1] != "root":
             return
