@@ -1,0 +1,77 @@
+# Architecture
+
+`vps-deployer` reconciles committed desired state from an infrastructure
+repository with Linux hosts reachable through OpenSSH. Application repositories
+contain code; the infrastructure repository contains deployment identity,
+runtime configuration, routing, storage, and secret references.
+
+## Ownership boundaries
+
+- The application repository owns executable code and its managed start script.
+- The infrastructure repository owns hosts and deployment manifests.
+- The operator environment owns secret values and local repository roots.
+- The remote host owns persistent runtime data, TLS keys, and release history.
+- `vps-deployer` owns generated systemd units, environment files, release trees,
+  active-release symlinks, and declared nginx sites.
+
+One host may run any number of isolated deployments. A deployment name is the
+stable identity used for its systemd unit, release directory, environment file,
+and optional nginx route. Deployments on the same host must use distinct names,
+loopback ports, storage paths, and proxy names.
+
+## Remote layout
+
+For deployment `example-prod` under the default managed root:
+
+```text
+/srv/vps-deployer/example-prod/
+  releases/<release-id>/
+  current -> releases/<release-id>
+/etc/vps-deployer/example-prod.env
+/etc/systemd/system/vps-deployer-example-prod.service
+/etc/nginx/sites-available/<proxy-name>      # when http_proxy is declared
+/etc/nginx/sites-enabled/<proxy-name>
+```
+
+Writable application state belongs outside releases, normally below `/var/lib`.
+Releases are immutable and owned by root with read/execute access for the service
+user. `remove` intentionally retains releases, storage, and service users.
+
+## Release identity and manifest
+
+Release IDs are content-addressed. The hash covers deployable source files,
+release includes, and the Git commit when the source is versioned. Ignored local
+files and `.git` do not enter the archive.
+
+Every installed release receives `build.properties`:
+
+```properties
+release.id=4d9901a
+commit.hash=<full Git SHA>
+commit.timestamp=<ISO-8601 commit time>
+build.timestamp=<UTC deployment time>
+build.branch=<checked-out branch>
+build.user=vps-deployer
+```
+
+For unversioned artifacts, commit fields are omitted and the branch is
+`unversioned`. `status` checks `release.id` and, when available, `commit.hash`.
+A running service with a missing or stale manifest is reported unhealthy.
+
+## Apply and rollback
+
+An apply uploads a new release only when its release ID is absent. It writes the
+environment and unit, activates the new symlink, restarts the service, and runs
+the health check. If activation fails and a previous release exists, the symlink
+is restored and the previous service is restarted.
+
+Nginx configuration is validated before reload. Each deployment reconciles only
+its declared proxy file, allowing several environments to share one VPS safely.
+
+## Privilege model
+
+Normal SSH access is used for inspection and unprivileged commands. Root-owned
+files and systemd operations use either the host account's scoped sudo access or
+a separate privileged SSH identity. A privileged identity should be restricted
+server-side with `tools/vps-deployer-ssh-gate`; it must not provide a general
+interactive root shell.

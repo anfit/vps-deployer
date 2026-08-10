@@ -2,6 +2,18 @@
 
 Manage isolated systemd deployments on existing Linux hosts over OpenSSH.
 
+Detailed documentation:
+
+- [`docs/architecture.md`](docs/architecture.md) — ownership model and remote layout.
+- [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
+- [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
+
+Detailed documentation:
+
+- [`docs/architecture.md`](docs/architecture.md) — ownership model and remote layout.
+- [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
+- [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
+
 ## Repository layout
 
 Keep host identity separate from application deployment identity. Deployment
