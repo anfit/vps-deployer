@@ -58,7 +58,26 @@ def test_content_hash_ignores_local_virtualenv(tmp_path):
     source = tmp_path / "a"; source.mkdir(); (source / "app.py").write_text("app")
     first = content_hash(source)
     (source / ".venv").mkdir(); (source / ".venv" / "local-only").write_text("ignored")
+    (source / "config.yaml").write_text("password: local-secret")
+    (source / ".test-venv").mkdir(); (source / ".test-venv" / "python").write_text("ignored")
     assert content_hash(source) == first
+
+
+def test_release_include_is_validated_and_affects_hash(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir(); (artifact / "app.py").write_text("app")
+    config = tmp_path / "prod.yaml"; config.write_text("mode: prod")
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(artifact), "include": [
+                                {"source": str(config), "target": "config/production.yaml"}]},
+                            "runtime": {"command": "./run.sh"}}, tmp_path / "d.yaml")
+    first = content_hash(dep.source, dep.includes)
+    config.write_text("mode: changed")
+    assert content_hash(dep.source, dep.includes) != first
+    with pytest.raises(ConfigError):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": str(artifact), "include": [
+                              {"source": str(config), "target": "../secret"}]},
+                          "runtime": {"command": "./run.sh"}}, tmp_path / "d.yaml")
 
 
 def test_secret_resolution_and_redacted_error(tmp_path, monkeypatch):

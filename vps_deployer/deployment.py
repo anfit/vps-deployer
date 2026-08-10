@@ -22,7 +22,7 @@ class Action:
         return f"{self.verb} {self.subject}"
 
 
-def content_hash(source: Path) -> str:
+def content_hash(source: Path, includes=()) -> str:
     if not source.exists():
         raise ConfigError(f"artifact does not exist: {source}")
     digest = hashlib.sha256()
@@ -33,12 +33,18 @@ def content_hash(source: Path) -> str:
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
+    for include in sorted(includes, key=lambda item: item.target):
+        if not include.source.is_file():
+            raise ConfigError(f"release include does not exist or is not a file: {include.source}")
+        digest.update(include.target.encode())
+        digest.update(include.source.read_bytes())
     return digest.hexdigest()[:7]
 
 
 def _ignored(root: Path, path: Path) -> bool:
-    ignored = {".git", ".venv", ".idea", "__pycache__", ".pytest_cache"}
-    return any(part in ignored or part.endswith(".egg-info") for part in path.relative_to(root).parts)
+    ignored = {".git", ".venv", ".idea", "__pycache__", ".pytest_cache", ".env", "config.yaml"}
+    return any(part in ignored or "venv" in part.lower() or part.startswith(".test-") or
+               part.endswith((".egg-info", ".key", ".secret")) for part in path.relative_to(root).parts)
 
 
 def release_id(dep: Deployment, explicit: str | None = None) -> str:
@@ -48,7 +54,7 @@ def release_id(dep: Deployment, explicit: str | None = None) -> str:
             raise ConfigError("invalid release id")
         return explicit
     # Content-addressed defaults make repeated apply operations genuinely idempotent.
-    return content_hash(dep.source)
+    return content_hash(dep.source, dep.includes)
 
 
 def env_file(values: dict[str, str]) -> str:
@@ -149,10 +155,13 @@ class Reconciler:
             with tarfile.open(archive, "w:gz") as tar:
                 for item in self.dep.source.iterdir():
                     if not _ignored(self.dep.source, item):
-                        tar.add(item, arcname=item.name, filter=lambda info: None if any(
-                            part in {".git", ".venv", ".idea", "__pycache__", ".pytest_cache"} or part.endswith(".egg-info")
-                            for part in Path(info.name).parts) else info)
+                        tar.add(item, arcname=item.name, filter=lambda info: None if _ignored(
+                            self.dep.source, self.dep.source / Path(info.name)) else info)
+                for include in self.dep.includes:
+                    tar.add(include.source, arcname=include.target)
         else:
+            if self.dep.includes:
+                raise ConfigError("release includes require a directory artifact source")
             archive = self.dep.source
         try:
             self.remote.upload(archive, upload)

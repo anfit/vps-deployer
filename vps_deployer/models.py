@@ -82,12 +82,19 @@ class Storage:
 
 
 @dataclass(frozen=True)
+class ReleaseInclude:
+    source: Path
+    target: str
+
+
+@dataclass(frozen=True)
 class Deployment:
     name: str
     host: str
     user: str
     privileged: bool
     source: Path
+    includes: tuple[ReleaseInclude, ...]
     command: str
     working_directory: str = "."
     restart: str = "always"
@@ -130,5 +137,17 @@ class Deployment:
         src = Path(str(_required(release, "source", source_name)))
         if not src.is_absolute():
             src = (path.parent / src).resolve()
-        return cls(name, str(_required(data, "host", source_name)), user, privileged, src, command, wd, restart,
+        includes: list[ReleaseInclude] = []
+        for index, item in enumerate(release.get("include", []) or []):
+            if not isinstance(item, dict):
+                raise ConfigError(f"{source_name}: release.include[{index}] must be a mapping")
+            include_source = Path(str(_required(item, "source", f"release.include[{index}]")))
+            if not include_source.is_absolute():
+                include_source = (path.parent / include_source).resolve()
+            target = str(_required(item, "target", f"release.include[{index}]"))
+            target_path = PurePosixPath(target)
+            if target_path.is_absolute() or ".." in target_path.parts or target in ("", "."):
+                raise ConfigError(f"{source_name}: unsafe release include target")
+            includes.append(ReleaseInclude(include_source, target))
+        return cls(name, str(_required(data, "host", source_name)), user, privileged, src, tuple(includes), command, wd, restart,
                    data.get("healthcheck"), env, secrets, stores, path)
