@@ -1,0 +1,4 @@
+interface:
+  display_name: "Onboard VPS Service"
+  short_description: "Prepare a service for managed VPS deployment"
+  default_prompt: "Use $onboard-vps-service to make this application deployable through vps-deployer."

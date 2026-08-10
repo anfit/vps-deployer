@@ -1,0 +1,4 @@
+interface:
+  display_name: "Operate VPS Deployments"
+  short_description: "Plan, deploy, verify, and recover VPS services"
+  default_prompt: "Use $operate-vps-deployments to safely plan, apply, and verify a managed service."

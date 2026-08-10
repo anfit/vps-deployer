@@ -14,6 +14,15 @@ Detailed documentation:
 - [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
 - [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
 
+## Codex skills
+
+Codex discovers two repository-scoped operational skills under `.agents/skills`:
+
+- `operate-vps-deployments` plans, applies, verifies, diagnoses, rolls back, and removes existing managed deployments.
+- `onboard-vps-service` adapts a new or legacy service and adds its desired state to `service-infra`.
+
+Invoke them explicitly as `$operate-vps-deployments` or `$onboard-vps-service`, or describe a matching task while working anywhere in this repository.
+
 ## Repository layout
 
 Keep host identity separate from application deployment identity. Deployment
