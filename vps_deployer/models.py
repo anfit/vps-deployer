@@ -105,8 +105,9 @@ class HttpProxy:
     name: str
     domain: str
     upstream: str
-    certificate: str
-    certificate_key: str
+    tls: bool
+    certificate: str | None
+    certificate_key: str | None
 
 
 @dataclass(frozen=True)
@@ -175,9 +176,17 @@ class Deployment:
                 raise ConfigError(f"{source_name}: invalid http_proxy.name")
             if not re.fullmatch(r"[A-Za-z0-9.-]+", domain) or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", upstream):
                 raise ConfigError(f"{source_name}: invalid http_proxy route")
-            proxy = HttpProxy(proxy_name, domain, upstream,
-                              safe_absolute(str(_required(proxy_data, "certificate", source_name)), source_name),
-                              safe_absolute(str(_required(proxy_data, "certificate_key", source_name)), source_name))
+            tls = proxy_data.get("tls", True)
+            if not isinstance(tls, bool):
+                raise ConfigError(f"{source_name}: http_proxy.tls must be boolean")
+            if tls:
+                certificate = safe_absolute(str(_required(proxy_data, "certificate", source_name)), source_name)
+                certificate_key = safe_absolute(str(_required(proxy_data, "certificate_key", source_name)), source_name)
+            else:
+                if proxy_data.get("certificate") or proxy_data.get("certificate_key"):
+                    raise ConfigError(f"{source_name}: HTTP-only proxy must not declare certificates")
+                certificate = certificate_key = None
+            proxy = HttpProxy(proxy_name, domain, upstream, tls, certificate, certificate_key)
         src = local_path(str(_required(release, "source", source_name)), path.parent, f"{source_name}: release.source")
         includes: list[ReleaseInclude] = []
         for index, item in enumerate(release.get("include", []) or []):

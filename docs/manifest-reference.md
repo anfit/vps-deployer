@@ -74,6 +74,20 @@ http_proxy:
   certificate_key: /etc/letsencrypt/live/example.org/privkey.pem
 ```
 
+For a trusted-network HTTP-only site, disable TLS explicitly and omit the
+certificate fields:
+
+```yaml
+http_proxy:
+  name: example-dev
+  domain: dev.example.test
+  upstream: http://127.0.0.1:5100
+  tls: false
+```
+
+TLS defaults to `true` for backward compatibility. When enabled, both
+certificate paths are required; when disabled, certificate fields are rejected.
+
 ### Service
 
 `service.user` is the isolated Linux account. Non-root users are created when

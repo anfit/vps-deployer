@@ -17,7 +17,7 @@ def render_proxy(deployment: Deployment) -> str:
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;"""
-    return f"""server {{
+    http = f"""server {{
     listen 80;
     server_name {proxy.domain};
     location / {{
@@ -26,7 +26,10 @@ def render_proxy(deployment: Deployment) -> str:
     }}
 }}
 
-server {{
+"""
+    if not proxy.tls:
+        return http
+    return http + f"""server {{
     listen 443 ssl;
     server_name {proxy.domain};
     ssl_certificate {proxy.certificate};

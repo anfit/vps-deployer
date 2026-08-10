@@ -63,6 +63,31 @@ def test_http_proxy_is_rendered_per_deployment(tmp_path):
     assert "ssl_certificate /etc/ssl/dev/fullchain.pem;" in rendered
 
 
+def test_http_only_proxy_omits_tls_server(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({
+        "name": "demo-dev", "host": "prod", "service": {"user": "svc-demo"},
+        "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"},
+        "http_proxy": {"name": "demo-dev", "domain": "dev.example.test",
+                       "upstream": "http://127.0.0.1:8100", "tls": False},
+    }, tmp_path / "dev.yaml")
+    rendered = render_proxy(dep)
+    assert "listen 80;" in rendered
+    assert "listen 443 ssl;" not in rendered
+    assert "ssl_certificate" not in rendered
+
+
+def test_http_only_proxy_rejects_certificate_fields(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    with pytest.raises(ConfigError, match="must not declare certificates"):
+        Deployment.parse({
+            "name": "demo-dev", "host": "prod", "service": {"user": "svc-demo"},
+            "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"},
+            "http_proxy": {"domain": "dev.example.test", "upstream": "http://127.0.0.1:8100",
+                           "tls": False, "certificate": "/etc/ssl/cert.pem"},
+        }, tmp_path / "dev.yaml")
+
+
 def test_content_hash_is_stable_and_content_sensitive(tmp_path):
     source = tmp_path / "a"; source.mkdir(); file = source / "x"; file.write_text("one")
     first = content_hash(source)
