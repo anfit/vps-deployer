@@ -8,12 +8,6 @@ Detailed documentation:
 - [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
 - [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
 
-Detailed documentation:
-
-- [`docs/architecture.md`](docs/architecture.md) — ownership model and remote layout.
-- [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
-- [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
-
 ## Codex skills
 
 Codex discovers two repository-scoped operational skills under `.agents/skills`:

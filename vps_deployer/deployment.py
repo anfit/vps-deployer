@@ -91,11 +91,10 @@ def _ignored(root: Path, path: Path) -> bool:
 
 def release_id(dep: Deployment, explicit: str | None = None) -> str:
     if explicit:
-        import re
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", explicit):
             raise ConfigError("invalid release id")
         return explicit
-    # Content-addressed defaults make repeated apply operations genuinely idempotent.
+    # Source-state-addressed defaults make repeated apply operations idempotent.
     return content_hash(dep.source, dep.includes)
 
 
