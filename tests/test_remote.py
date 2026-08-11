@@ -1,7 +1,7 @@
 from vps_deployer.models import Host
 import base64
 import json
-from vps_deployer.remote import RemoteHost
+from vps_deployer.remote import RemoteHost, Result
 
 
 def test_ssh_uses_config_target_and_quotes_arguments():
@@ -45,3 +45,15 @@ def test_privileged_systemd_write_uses_validated_unit_capability(monkeypatch):
     remote.write_file(path, b"validated unit\n", "0644", "root", "root")
     assert captured["argv"] == ["write-unit", path]
     assert captured["kwargs"]["input_data"] == b"validated unit\n"
+
+
+def test_privileged_expectation_path_uses_existence_only_capability(monkeypatch):
+    host = Host.parse({"name": "prod", "ssh": {"host": "alias", "user": "deploy",
+                                                       "privileged_host": "server", "privileged_user": "root"}}, "test")
+    captured = {}
+    remote = RemoteHost(host)
+    monkeypatch.setattr(remote, "run", lambda argv, **kwargs: captured.update(argv=argv, kwargs=kwargs) or
+                        Result("", "", 0))
+    assert remote.expected_path_exists("/etc/example/cert.pem")
+    assert captured["argv"] == ["expect-path", "-e", "/etc/example/cert.pem"]
+    assert captured["kwargs"] == {"sudo": True, "check": False}

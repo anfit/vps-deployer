@@ -43,7 +43,9 @@ agree; conflicts are configuration errors. Paths are combined.
   `version` constraint using `>=`, `<=`, `==`, `>`, or `<` and dotted numeric
   versions. Version checks execute `<command> --version` as the ordinary SSH user
   and compare the first numeric version in its output.
-- `paths` is a list of absolute paths checked as the ordinary SSH user.
+- `paths` is a list of absolute paths checked through the host's privilege path.
+  The restricted gate exposes a dedicated existence-only check: it cannot read,
+  list, modify, or glob the path.
 - `architecture` is compared exactly with `uname -m`.
 
 Every deployment also implicitly expects `systemctl` and `tar`; HTTP health checks

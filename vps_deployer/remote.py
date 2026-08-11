@@ -62,6 +62,7 @@ class RemoteHost:
             "chown": "set-ownership", "chmod": "set-mode", "journalctl": "service-logs",
             "write-file": "write-file",
             "write-unit": "write-unit",
+            "expect-path": "expect-path",
             "hold-lock": "hold-lock",
         }.get(command)
         if not operation:
@@ -125,3 +126,7 @@ class RemoteHost:
 
     def exists(self, path: str, sudo: bool = False) -> bool:
         return self.run(["test", "-e", path], sudo=sudo, check=False).returncode == 0
+
+    def expected_path_exists(self, path: str) -> bool:
+        command = ["expect-path", "-e", path] if self.host.ssh.privileged_host is not None else ["test", "-e", path]
+        return self.run(command, sudo=True, check=False).returncode == 0

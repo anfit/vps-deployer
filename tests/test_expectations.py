@@ -30,6 +30,10 @@ class ExpectationRemote:
             return Result((value + "\n") if value else "", "", 0 if value else 1)
         return Result("", "", 1)
 
+    def expected_path_exists(self, path):
+        self.calls.append(["expect-path", path])
+        return path in self.paths
+
 
 def manifest(tmp_path: Path, expect=None) -> Deployment:
     source = tmp_path / "app"; source.mkdir(exist_ok=True)

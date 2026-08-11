@@ -104,6 +104,9 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
         return ["cat", args[0]]
     if operation == "path-exists" and len(args) == 2 and args[0] == "-e" and _owned_file(args[1], managed_root, storage):
         return ["test", "-e", args[1]]
+    if (operation == "expect-path" and len(args) == 2 and args[0] == "-e" and
+            args[1] != "/" and SAFE_PATH.fullmatch(args[1]) and ".." not in PurePosixPath(args[1]).parts):
+        return ["test", "-e", args[1]]
     if operation == "read-link" and len(args) == 1 and _deployment_path(args[0], managed_root):
         return ["readlink", args[0]]
     if operation == "ensure-directories" and args and args[0] == "-p" and all(

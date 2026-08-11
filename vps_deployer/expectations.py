@@ -72,7 +72,7 @@ def evaluate_expectations(deployment: Deployment, remote: RemoteHost) -> list[Ex
                                          f"version {rendered} {'satisfies' if ok else 'does not satisfy'} {constraint}"))
 
     for path in deployment.expectations.paths:
-        exists = remote.run(["test", "-e", path], check=False).returncode == 0
+        exists = remote.expected_path_exists(path)
         results.append(ExpectationResult(f"path {path}", exists,
                                          "exists" if exists else "missing"))
     return results

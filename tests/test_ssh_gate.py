@@ -54,6 +54,14 @@ def test_gate_honors_configured_managed_root():
         build_argv(operation, ROOT, STORAGE)
 
 
+def test_gate_expectation_path_reveals_only_absolute_path_existence():
+    assert build_argv(request("expect-path", "-e", "/etc/example/cert.pem"), ROOT, STORAGE) == [
+        "test", "-e", "/etc/example/cert.pem"]
+    for path in ("/", "relative", "/etc/../shadow", "/path with spaces"):
+        with pytest.raises(ValueError):
+            build_argv(request("expect-path", "-e", path), ROOT, STORAGE)
+
+
 def test_gate_write_file_has_no_shared_temporary_path():
     argv = build_argv(request("write-file", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"),
                       ROOT, STORAGE)
