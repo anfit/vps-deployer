@@ -82,6 +82,25 @@ will propose reactivating the current desired release. Successful deployments
 retain one rollback target: the release that was active immediately beforehand.
 All older release directories are pruned after health and proxy checks succeed.
 
+## Adopting deployments created before resource state metadata
+
+Older releases of vps-deployer did not write `/etc/vps-deployer/<name>.state`.
+When upgrading such a deployment, do not remove a timer or HTTP proxy in the same
+first apply: without historical metadata the client cannot safely distinguish a
+formerly managed resource from unrelated host configuration.
+
+Use a two-step migration:
+
+1. Keep the existing timer and `http_proxy` declarations unchanged and apply once
+   with the upgraded client. Verify status and a no-op plan. This records their
+   exact ownership in the state file.
+2. Commit the manifest change that removes or renames the resource, then plan and
+   apply again. The recorded ownership allows transactional cleanup.
+
+If the old desired manifest is unavailable, inspect and reconcile the host
+manually before the first upgraded apply; do not guess a proxy name on a shared
+host.
+
 ## Remove
 
 ```powershell

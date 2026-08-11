@@ -94,6 +94,11 @@ reconciles absence as desired state: obsolete timers and nginx sites are disable
 and removed, and service/timer mode transitions disable the former supervisor
 after the replacement is healthy.
 
+Deployments created by clients predating the state file require a one-time
+adoption apply with their existing optional resources still declared. This
+records ownership before a subsequent manifest removes or renames those
+resources; see the operations guide.
+
 ## Privilege model
 
 Normal SSH access is used for inspection and unprivileged commands. Root-owned
