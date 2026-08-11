@@ -26,6 +26,7 @@ the server-side script and authorized-key policy together with client changes.
 
 ```powershell
 & $deployer --repo $infra validate
+& $deployer --repo $infra check example-prod
 & $deployer --repo $infra host inspect prod
 & $deployer --repo $infra host onboard prod
 ```
@@ -33,6 +34,10 @@ the server-side script and authorized-key policy together with client changes.
 `inspect` is read-only. `onboard` creates the managed root and deployer
 configuration directory. Run onboarding once per host or after repairing host
 permissions.
+
+`check` evaluates the deployment's merged application, infrastructure, and
+implicit host expectations without changing the host. `plan` and `apply` enforce
+the same preflight automatically.
 
 ## Plan and apply
 

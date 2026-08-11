@@ -44,6 +44,10 @@ release:
     - source: ${SERVICE_INFRA_DIR}/configs/example/prod.yaml
       target: config/production.yaml
 
+expect:
+  paths:
+    - /etc/letsencrypt/live/example.org/fullchain.pem
+
 runtime:
   # command defaults to ./.deployer/run
   working_directory: .
@@ -137,6 +141,14 @@ inside a prepared artifact, a content-addressed environment, or an environment
 associated with the release. If persistent storage holds a runtime environment,
 key it by dependency content rather than mutating one environment shared by all
 releases.
+
+### Expectations
+
+`expect` declares infrastructure-owned, read-only host assumptions. Supported
+fields are `commands`, `paths`, and `architecture`; see
+[`expectations.md`](expectations.md). Application-owned assumptions are loaded
+from `.deployer/expect.yaml` in a directory or tar release and merged with the
+manifest. Plans and applies stop before mutation when any check fails.
 
 ### Environment and secrets
 

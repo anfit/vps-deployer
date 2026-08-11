@@ -35,6 +35,7 @@ than general machine state.
 Detailed documentation:
 
 - [`docs/build-properties.md`](docs/build-properties.md) — application-visible build and deployment provenance contract.
+- [`docs/expectations.md`](docs/expectations.md) — read-only application and infrastructure host contracts.
 - [`docs/architecture.md`](docs/architecture.md) — ownership model and remote layout.
 - [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
 - [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
@@ -113,6 +114,7 @@ release directories are pruned. Failed deployments do not trigger cleanup.
 
 ```console
 vps-deployer validate
+vps-deployer check DEPLOYMENT
 vps-deployer host inspect HOST
 vps-deployer host onboard HOST
 vps-deployer plan DEPLOYMENT

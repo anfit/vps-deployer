@@ -4,13 +4,18 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 import os
 import re
+import tarfile
 import unicodedata
 from typing import Any
+import yaml
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 SAFE_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SAFE_UNIT_PATH = re.compile(r"^/?[A-Za-z0-9._+@:/-]+$")
+SAFE_COMMAND = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+SAFE_ARCHITECTURE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+VERSION_CONSTRAINT = re.compile(r"^(>=|<=|==|>|<)\s*([0-9]+(?:\.[0-9]+)*)$")
 
 
 class ConfigError(ValueError):
@@ -140,6 +145,103 @@ class Timer:
 
 
 @dataclass(frozen=True)
+class CommandExpectation:
+    name: str
+    version: str | None = None
+
+
+@dataclass(frozen=True)
+class Expectations:
+    commands: tuple[CommandExpectation, ...] = ()
+    paths: tuple[str, ...] = ()
+    architecture: str | None = None
+
+
+def parse_expectations(data: Any, where: str) -> Expectations:
+    if data is None:
+        return Expectations()
+    if not isinstance(data, dict) or set(data) - {"commands", "paths", "architecture"}:
+        raise ConfigError(f"{where}: expect must contain only commands, paths and architecture")
+    raw_commands = data.get("commands") or {}
+    command_versions: dict[str, str | None] = {}
+    if isinstance(raw_commands, list):
+        for value in raw_commands:
+            command_versions[str(value)] = None
+    elif isinstance(raw_commands, dict):
+        for name, settings in raw_commands.items():
+            if settings is None:
+                settings = {}
+            if not isinstance(settings, dict) or set(settings) - {"version"}:
+                raise ConfigError(f"{where}: invalid expectation for command {name}")
+            version = settings.get("version")
+            if version is not None and (not isinstance(version, str) or not VERSION_CONSTRAINT.fullmatch(version)):
+                raise ConfigError(f"{where}: invalid version constraint for command {name}")
+            command_versions[str(name)] = version
+    else:
+        raise ConfigError(f"{where}: expect.commands must be a list or mapping")
+    if any(not SAFE_COMMAND.fullmatch(name) for name in command_versions):
+        raise ConfigError(f"{where}: invalid expected command name")
+    raw_paths = data.get("paths") or []
+    if not isinstance(raw_paths, list):
+        raise ConfigError(f"{where}: expect.paths must be a list")
+    paths = tuple(safe_absolute(str(value), f"{where}: expect.paths") for value in raw_paths)
+    architecture = data.get("architecture")
+    if architecture is not None and (not isinstance(architecture, str) or
+                                     not SAFE_ARCHITECTURE.fullmatch(architecture)):
+        raise ConfigError(f"{where}: invalid expected architecture")
+    commands = tuple(CommandExpectation(name, version) for name, version in sorted(command_versions.items()))
+    return Expectations(commands, tuple(sorted(set(paths))), architecture)
+
+
+def application_expectations(source: Path) -> Expectations:
+    label = f"{source}:.deployer/expect.yaml"
+    content: str | None = None
+    if source.is_dir():
+        path = source / ".deployer" / "expect.yaml"
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+            label = str(path)
+    elif source.is_file():
+        try:
+            with tarfile.open(source, "r:gz") as archive:
+                members = [member for member in archive.getmembers()
+                           if PurePosixPath(member.name) == PurePosixPath(".deployer/expect.yaml")]
+                if len(members) > 1 or (members and not members[0].isfile()):
+                    raise ConfigError(f"{label}: invalid or duplicate contract")
+                if members:
+                    stream = archive.extractfile(members[0])
+                    if stream is None:
+                        raise ConfigError(f"{label}: contract is unreadable")
+                    content = stream.read(64 * 1024 + 1).decode("utf-8")
+                    if len(content.encode("utf-8")) > 64 * 1024:
+                        raise ConfigError(f"{label}: contract is too large")
+        except (tarfile.TarError, UnicodeDecodeError) as exc:
+            raise ConfigError(f"{label}: invalid contract artifact") from exc
+    if content is None:
+        return Expectations()
+    try:
+        data = yaml.safe_load(content) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{label}: invalid YAML") from exc
+    return parse_expectations(data, label)
+
+
+def merge_expectations(application: Expectations, infrastructure: Expectations,
+                       where: str) -> Expectations:
+    commands = {item.name: item.version for item in application.commands}
+    for item in infrastructure.commands:
+        if item.name in commands and commands[item.name] != item.version:
+            raise ConfigError(f"{where}: conflicting expectation for command {item.name}")
+        commands[item.name] = item.version
+    if (application.architecture and infrastructure.architecture and
+            application.architecture != infrastructure.architecture):
+        raise ConfigError(f"{where}: conflicting architecture expectations")
+    return Expectations(tuple(CommandExpectation(name, version) for name, version in sorted(commands.items())),
+                        tuple(sorted(set(application.paths) | set(infrastructure.paths))),
+                        infrastructure.architecture or application.architecture)
+
+
+@dataclass(frozen=True)
 class Deployment:
     name: str
     host: str
@@ -156,6 +258,7 @@ class Deployment:
     storage: tuple[Storage, ...] = ()
     http_proxy: HttpProxy | None = None
     timer: Timer | None = None
+    expectations: Expectations = Expectations()
     manifest_path: Path = Path()
 
     @classmethod
@@ -259,5 +362,7 @@ class Deployment:
             if target_path.is_absolute() or ".." in target_path.parts or target in ("", "."):
                 raise ConfigError(f"{source_name}: unsafe release include target")
             includes.append(ReleaseInclude(include_source, target))
+        expected = merge_expectations(application_expectations(src),
+                                      parse_expectations(data.get("expect"), source_name), source_name)
         return cls(name, str(_required(data, "host", source_name)), user, privileged, src, tuple(includes), command, wd, restart,
-                   healthcheck, env, secrets, stores, proxy, timer, path)
+                   healthcheck, env, secrets, stores, proxy, timer, expected, path)

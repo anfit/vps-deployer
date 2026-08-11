@@ -18,6 +18,7 @@ from .models import ConfigError, Deployment, Host
 from .remote import RemoteError, RemoteHost
 from .systemd import render_timer, render_unit, timer_name, unit_name
 from .nginx import nginx_name, render_proxy
+from .expectations import require_expectations
 
 
 @dataclass(frozen=True)
@@ -214,6 +215,7 @@ class Reconciler:
         self.proxy_enabled = f"/etc/nginx/sites-enabled/{nginx_name(dep)}" if dep.http_proxy else None
 
     def plan(self, require_secrets: bool = False) -> list[Action]:
+        require_expectations(self.dep, self.remote)
         values, secret_keys = self.repo.resolve_environment(self.dep, require_secrets)
         actions: list[Action] = []
         if self.remote.run(["id", "-u", self.dep.user], check=False).returncode:

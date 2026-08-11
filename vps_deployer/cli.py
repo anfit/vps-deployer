@@ -9,6 +9,7 @@ from .deployment import Reconciler, git_metadata, release_id, select_rollback
 from .models import ConfigError
 from .remote import RemoteError, RemoteHost
 from .systemd import timer_name, unit_name
+from .expectations import evaluate_expectations
 
 
 def parser() -> argparse.ArgumentParser:
@@ -19,7 +20,7 @@ def parser() -> argparse.ArgumentParser:
     val = sub.add_parser("validate"); val.add_argument("deployment", nargs="?")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
-    for name in ("plan", "apply", "status", "logs", "rollback", "remove"):
+    for name in ("check", "plan", "apply", "status", "logs", "rollback", "remove"):
         cmd = sub.add_parser(name); cmd.add_argument("deployment")
         if name in ("plan", "apply"): cmd.add_argument("--release-id")
         if name == "apply": cmd.add_argument("--allow-privileged", action="store_true")
@@ -63,6 +64,12 @@ def run(args) -> int:
         remote.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
         print(f"Onboarded {host.name}"); return 0
     dep = _dep(repo, args.deployment); remote = _remote(repo, dep, args.verbose)
+    if args.command == "check":
+        results = evaluate_expectations(dep, remote)
+        print(f"Deployment: {dep.name}\nHost: {dep.host}\n\nHOST EXPECTATIONS")
+        for result in results:
+            print(f"  {'OK' if result.ok else 'FAIL'} {result.subject}: {result.detail}")
+        return 0 if all(result.ok for result in results) else 1
     if args.command == "remove":
         rec = Reconciler(repo, dep, remote, "remove")
         actions = rec.remove(args.allow_privileged)
