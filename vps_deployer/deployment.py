@@ -140,7 +140,7 @@ def _ignored(root: Path, path: Path) -> bool:
     if any(part in ignored or "venv" in part.lower() or part.startswith(".test-") or
            part.endswith((".egg-info", ".key", ".secret")) for part in relative.parts):
         return True
-    ignore_file = root / ".deployer" / "ignore"
+    ignore_file = root / ".deployer" / "ignore.txt"
     legacy_ignore = root / ".vps-deployer-ignore"
     if not ignore_file.is_file() and legacy_ignore.is_file():
         ignore_file = legacy_ignore

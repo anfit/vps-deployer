@@ -15,7 +15,7 @@ It is deliberately:
 - not a build system;
 - not a multi-host rollout orchestrator.
 
-Applications arrive as prepared artifacts with an executable `.deployer/run`.
+Applications arrive as prepared artifacts with an executable `.deployer/run.sh`.
 Host packages, firewalls, TLS issuance, databases, DNS, kernel settings, and
 unrelated users remain owned by host administration. The core product boundary
 is a single-host deployment transaction.
@@ -91,15 +91,15 @@ release:
       target: config/production.yaml
 ```
 
-Directory artifacts may contain a `.deployer/ignore` file with gitignore-like
+Directory artifacts may contain a `.deployer/ignore.txt` file with gitignore-like
 glob patterns. Matching developer-local files are excluded from both the release
 hash and uploaded archive; use it to prevent local credentials and helper files
 from entering managed releases. `.vps-deployer-ignore` remains a compatibility
 fallback for applications that have not migrated.
 
-Applications expose their managed runtime through `.deployer/run`. This is the
+Applications expose their managed runtime through `.deployer/run.sh`. This is the
 default `runtime.command`, so ordinary infrastructure manifests need not repeat
-an application-owned path. Named entrypoints such as `.deployer/bootstrap` may
+an application-owned path. Named entrypoints such as `.deployer/bootstrap.sh` may
 be selected explicitly for a distinct service lifecycle.
 
 Every release contains an application-facing `build.properties` file. Existing

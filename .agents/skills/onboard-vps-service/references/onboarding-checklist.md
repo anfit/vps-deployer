@@ -15,7 +15,7 @@
 - Runtime writes redirected to persistent storage
 - LF shell scripts and executable entry point
 - Stable loopback health endpoint
-- Local-only content excluded with `.vps-deployer-ignore`
+- Local-only content excluded with `.deployer/ignore.txt`
 - Managed-startup tests pass
 
 ## Desired state

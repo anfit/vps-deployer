@@ -68,7 +68,7 @@ def test_gate_write_file_has_no_shared_temporary_path():
     assert argv == ["__write_file__", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"]
 
 
-def service_unit(*, user="svc-demo", command="/srv/custom/demo/current/.deployer/run"):
+def service_unit(*, user="svc-demo", command="/srv/custom/demo/current/.deployer/run.sh"):
     return f"""[Unit]
 Description=vps-deployer service demo
 After=network-online.target

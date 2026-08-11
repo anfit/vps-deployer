@@ -29,7 +29,7 @@ Resolve repositories through `PROJECTS_DIR`, `VPS_DEPLOYER_DIR`, and `SERVICE_IN
 - Keep virtual environments, caches, state, databases, and other writes in declared persistent storage, not immutable releases.
 - Read runtime configuration from committed files or environment variables. Move only actual secret values to environment-backed inputs.
 - Provide a stable loopback health endpoint that tests application readiness without DNS or TLS.
-- Add `.vps-deployer-ignore` for local credentials, helper files, build output, or other content that must not enter release hashes.
+- Add `.deployer/ignore.txt` for local credentials, helper files, build output, or other content that must not enter release hashes.
 - Enforce LF for deployed shell scripts, commonly with `.gitattributes`.
 - Add or update application tests for the managed startup path.
 
