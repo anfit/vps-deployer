@@ -111,3 +111,13 @@ with an explicit managed root and allowlisted storage paths, so the key cannot
 operate on unrelated state elsewhere under `/var/lib`. Root-owned configuration
 is streamed to an atomic `write-file` capability; secret content is never staged
 at an unprivileged or shared temporary pathname.
+
+The forced-command gate does not accept opaque systemd unit contents through its
+general file writer. Managed service and timer files use a distinct capability;
+the gate validates the complete hardened structure, requires a matching non-root
+service identity, confines `WorkingDirectory` and `ExecStart` to that deployment's
+active release, and checks every writable path against the key's storage policy
+before writing atomically. Thus the restricted key cannot turn a unit write plus
+`systemctl restart` into arbitrary root execution. Deployments intentionally
+running as root are outside this restricted-key threat model and require a
+separately trusted privilege path.

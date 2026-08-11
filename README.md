@@ -114,5 +114,11 @@ The client sends named capability requests; the gate constructs fixed executable
 arguments and rejects storage outside this policy. Update the forced-command
 installation before using a client containing this protocol change.
 
+Systemd units use a separate validated gate capability rather than opaque file
+writes. The gate accepts only the hardened non-root unit structure rooted in the
+deployment's active release and allowlisted storage. A restricted-key host cannot
+apply `service.privileged: true`; root services require a separately trusted sudo
+or host administration path.
+
 Secrets are accepted only through explicitly declared process-environment
 references and are never printed by planning or validation.

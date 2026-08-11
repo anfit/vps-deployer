@@ -33,3 +33,15 @@ def test_privileged_write_uses_stdin_capability(monkeypatch):
     remote.write_file("/etc/vps-deployer/demo.env", b"SECRET=value\n", "0640", "root", "svc-demo")
     assert captured["argv"] == ["write-file", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"]
     assert captured["kwargs"]["input_data"] == b"SECRET=value\n"
+
+
+def test_privileged_systemd_write_uses_validated_unit_capability(monkeypatch):
+    host = Host.parse({"name": "prod", "ssh": {"host": "alias", "user": "deploy",
+                                                       "privileged_host": "server", "privileged_user": "root"}}, "test")
+    captured = {}
+    remote = RemoteHost(host)
+    monkeypatch.setattr(remote, "run", lambda argv, **kwargs: captured.update(argv=argv, kwargs=kwargs))
+    path = "/etc/systemd/system/vps-deployer-demo.service"
+    remote.write_file(path, b"validated unit\n", "0644", "root", "root")
+    assert captured["argv"] == ["write-unit", path]
+    assert captured["kwargs"]["input_data"] == b"validated unit\n"

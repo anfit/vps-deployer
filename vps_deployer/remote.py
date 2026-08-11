@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import re
 
 from .models import Host
 
@@ -60,6 +61,7 @@ class RemoteHost:
             "find": "list-releases", "rm": "remove-paths", "tar": "extract-release",
             "chown": "set-ownership", "chmod": "set-mode", "journalctl": "service-logs",
             "write-file": "write-file",
+            "write-unit": "write-unit",
             "hold-lock": "hold-lock",
         }.get(command)
         if not operation:
@@ -68,7 +70,12 @@ class RemoteHost:
 
     def write_file(self, path: str, content: bytes, mode: str, owner: str, group: str) -> None:
         if self.host.ssh.privileged_host is not None:
-            self.run(["write-file", path, owner, group, mode], sudo=True, input_data=content)
+            if re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.(service|timer)", path):
+                if (owner, group, mode) != ("root", "root", "0644"):
+                    raise RemoteError("managed systemd units require root:root mode 0644")
+                self.run(["write-unit", path], sudo=True, input_data=content)
+            else:
+                self.run(["write-file", path, owner, group, mode], sudo=True, input_data=content)
             return
         script = ("set -eu; target=$1; owner=$2; group=$3; mode=$4; "
                   "temp=$(mktemp \"$(dirname \"$target\")/.vps-deployer.XXXXXX\"); "

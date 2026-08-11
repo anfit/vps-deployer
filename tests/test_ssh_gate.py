@@ -3,9 +3,13 @@ import runpy
 
 import pytest
 
+from vps_deployer.models import Deployment
+from vps_deployer.systemd import render_timer, render_unit, timer_name, unit_name
+
 
 GATE = runpy.run_path(str(Path(__file__).parents[1] / "tools" / "vps-deployer-ssh-gate"))
 build_argv = GATE["build_argv"]
+validate_unit = GATE["validate_unit"]
 ROOT = "/srv/custom"
 STORAGE = {"/var/lib/demo"}
 
@@ -54,6 +58,70 @@ def test_gate_write_file_has_no_shared_temporary_path():
     argv = build_argv(request("write-file", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"),
                       ROOT, STORAGE)
     assert argv == ["__write_file__", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"]
+
+
+def service_unit(*, user="svc-demo", command="/srv/custom/demo/current/.deployer/run"):
+    return f"""[Unit]
+Description=vps-deployer service demo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={user}
+Group={user}
+WorkingDirectory=/srv/custom/demo/current
+EnvironmentFile=/etc/vps-deployer/demo.env
+ExecStart={command}
+Restart=always
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/demo
+
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def test_gate_accepts_only_valid_non_root_managed_units():
+    target = "/etc/systemd/system/vps-deployer-demo.service"
+    assert build_argv(request("write-unit", target), ROOT, STORAGE) == ["__write_unit__", target]
+    validate_unit(target, service_unit(), ROOT, STORAGE)
+
+
+@pytest.mark.parametrize(("user", "command"), [
+    ("root", "/bin/sh"),
+    ("svc-demo", "/bin/sh"),
+    ("svc-demo", "/srv/custom/other/current/run"),
+])
+def test_gate_rejects_units_that_escape_non_root_release_policy(user, command):
+    with pytest.raises(ValueError):
+        validate_unit("/etc/systemd/system/vps-deployer-demo.service",
+                      service_unit(user=user, command=command), ROOT, STORAGE)
+
+
+def test_opaque_write_file_cannot_replace_systemd_units():
+    with pytest.raises(ValueError):
+        build_argv(request("write-file", "/etc/systemd/system/vps-deployer-demo.service",
+                           "root", "root", "0644"), ROOT, STORAGE)
+
+
+@pytest.mark.parametrize(("scheduled", "with_storage"), [
+    (False, False), (False, True), (True, False), (True, True)])
+def test_gate_accepts_client_rendered_hardened_units(tmp_path, scheduled, with_storage):
+    data = {"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+            "release": {"source": str(tmp_path)}}
+    if with_storage:
+        data["storage"] = {"data": {"path": "/var/lib/demo"}}
+    if scheduled:
+        data["timer"] = {"on_calendar": "daily", "randomized_delay_sec": 60}
+    dep = Deployment.parse(data, tmp_path / "demo.yaml")
+    validate_unit(f"/etc/systemd/system/{unit_name(dep)}", render_unit(dep, ROOT), ROOT, STORAGE)
+    if scheduled:
+        validate_unit(f"/etc/systemd/system/{timer_name(dep)}", render_timer(dep), ROOT, STORAGE)
 
 
 def test_gate_never_reads_privileged_temporary_paths():
