@@ -46,19 +46,22 @@ release includes, and the Git commit when the source is versioned, so identical
 deployable bytes from different commits intentionally produce different IDs. Ignored local
 files and `.git` do not enter the archive.
 
-Every installed release receives `build.properties`:
+Every installed release receives deployment provenance in the separate,
+application-facing [`build.properties` contract](build-properties.md). Existing
+application/build fields are preserved:
 
 ```properties
-release.id=4d9901a72c81e240
-commit.hash=<full Git SHA>
-commit.timestamp=<ISO-8601 commit time>
-build.timestamp=<UTC deployment time>
-build.branch=<checked-out branch>
-build.user=vps-deployer
+deployment.release=4d9901a72c81e240
+deployment.commit=<full Git SHA>
+deployment.commit-time=<ISO-8601 commit time>
+deployment.timestamp=<UTC deployment time>
+deployment.branch=<checked-out branch>
+deployment.actor=vps-deployer
 ```
 
 For unversioned artifacts, commit fields are omitted and the branch is
-`unversioned`. `status` checks `release.id` and, when available, `commit.hash`.
+`unversioned`. `status` checks `deployment.release` and, when available,
+`deployment.commit`.
 A running service with a missing or stale manifest is reported unhealthy.
 
 ## Apply and rollback

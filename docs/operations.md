@@ -44,7 +44,7 @@ permissions.
 
 Review every plan. A repeated plan after a successful apply should report
 `No changes.` Status is successful only when the service is active, the health
-check passes, and the active `build.properties` matches the desired release and
+check passes, and the active `build.properties` deployment namespace matches the desired release and
 Git commit.
 
 For timer deployments, status requires the timer to be active instead of the

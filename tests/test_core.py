@@ -5,6 +5,7 @@ import pytest
 
 from vps_deployer.config import Repository
 from vps_deployer.deployment import (content_hash, env_file, env_matches, git_metadata,
+                                     parse_build_properties, render_build_properties,
                                      releases_to_prune, select_rollback, validate_archive)
 from vps_deployer.models import ConfigError, Deployment, Host
 from vps_deployer.systemd import render_timer, render_unit, timer_name
@@ -361,9 +362,30 @@ def test_git_build_metadata_records_exact_revision(tmp_path):
     subprocess.run(["git", "-C", str(tmp_path), "add", "app.py"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "test"], check=True)
     commit, rendered = git_metadata(tmp_path, "release-123")
-    assert f"commit.hash={commit}" in rendered
-    assert "release.id=release-123" in rendered
-    assert "build.user=vps-deployer" in rendered
+    assert f"deployment.commit={commit}" in rendered
+    assert "deployment.release=release-123" in rendered
+    assert "deployment.actor=vps-deployer" in rendered
+
+
+def test_build_properties_preserve_application_provenance():
+    application = parse_build_properties("build.version=1.2.3\ncommit.hash=abc123\n")
+    rendered = render_build_properties(application, {
+        "deployment.release": "release-123", "deployment.commit": "def456"})
+    assert parse_build_properties(rendered) == {
+        "build.version": "1.2.3", "commit.hash": "abc123",
+        "deployment.release": "release-123", "deployment.commit": "def456"}
+
+
+@pytest.mark.parametrize("content", ["broken", "1bad=value", "same=one\nsame=two"])
+def test_build_properties_reject_ambiguous_input(content):
+    with pytest.raises(ConfigError):
+        parse_build_properties(content)
+
+
+def test_application_cannot_claim_deployment_properties():
+    with pytest.raises(ConfigError, match="application-defined"):
+        render_build_properties({"deployment.release": "fake"},
+                                {"deployment.release": "actual"})
 
 
 def test_rollback_selection():

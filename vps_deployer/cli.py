@@ -88,13 +88,13 @@ def run(args) -> int:
         manifest = rec.release_manifest() if active else {}
         metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
         desired_commit, _ = git_metadata(metadata_source, desired)
-        manifest_ok = manifest.get("release.id") == desired and (not desired_commit or manifest.get("commit.hash") == desired_commit)
+        manifest_ok = manifest.get("deployment.release") == desired and (not desired_commit or manifest.get("deployment.commit") == desired_commit)
         healthy = service.returncode == 0 and rec._healthy() and manifest_ok
         health = "healthy" if healthy else "unhealthy"
         supervisor_label = "timer" if dep.timer else "service"
         print(f"deployment: {dep.name}\nhost: {dep.host}\n{supervisor_label}: {service.stdout.strip() or 'unknown'}\n"
               f"desired release: {desired}\nactive release: {active or 'none'}\nhealth: {health}\nuser: {dep.user}")
-        print(f"desired commit: {desired_commit or 'unversioned'}\nactive commit: {manifest.get('commit.hash', 'missing')}\n"
+        print(f"desired commit: {desired_commit or 'unversioned'}\nactive commit: {manifest.get('deployment.commit', 'missing')}\n"
               f"manifest: {'current' if manifest_ok else 'stale or missing'}")
         if dep.timer:
             timer_status = rec.timer_status()

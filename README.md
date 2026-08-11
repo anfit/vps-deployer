@@ -4,6 +4,7 @@ Manage isolated systemd deployments on existing Linux hosts over OpenSSH.
 
 Detailed documentation:
 
+- [`docs/build-properties.md`](docs/build-properties.md) — application-visible build and deployment provenance contract.
 - [`docs/architecture.md`](docs/architecture.md) — ownership model and remote layout.
 - [`docs/manifest-reference.md`](docs/manifest-reference.md) — complete host and deployment schema.
 - [`docs/operations.md`](docs/operations.md) — onboarding, deployment, status, rollback, removal, and troubleshooting.
@@ -59,10 +60,10 @@ glob patterns. Matching developer-local files are excluded from both the release
 hash and uploaded archive; use it to prevent local credentials and helper files
 from entering managed releases.
 
-Every release receives a generated `build.properties` manifest. It records the
-release ID, exact Git commit and commit time when available, source branch,
-deployment time, and deployer identity without modifying the checkout. `status`
-checks the active manifest against the desired release and commit; stale or
+Every release contains an application-facing `build.properties` file. Existing
+application/build properties are preserved and vps-deployer appends reserved
+`deployment.*` provenance without modifying the checkout. `status` checks the
+active deployment provenance against the desired release and commit; stale or
 missing metadata makes the deployment unhealthy. After a successful activation,
 the active release and its immediate predecessor are retained for rollback; older
 release directories are pruned. Failed deployments do not trigger cleanup.
