@@ -8,10 +8,20 @@ from typing import Any
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+SAFE_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SAFE_UNIT_PATH = re.compile(r"^/?[A-Za-z0-9._+@:/-]+$")
 
 
 class ConfigError(ValueError):
     pass
+
+
+def safe_text(value: str, where: str, *, systemd: bool = False) -> str:
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ConfigError(f"{where}: control characters are not allowed")
+    if systemd and "%" in value:
+        raise ConfigError(f"{where}: systemd specifiers are not allowed")
+    return value
 
 
 def _required(data: dict[str, Any], key: str, where: str) -> Any:
@@ -21,8 +31,9 @@ def _required(data: dict[str, Any], key: str, where: str) -> Any:
 
 
 def safe_absolute(path: str, where: str) -> str:
+    safe_text(path, where, systemd=True)
     p = PurePosixPath(path)
-    if not p.is_absolute() or ".." in p.parts or str(p) == "/":
+    if not p.is_absolute() or ".." in p.parts or str(p) == "/" or not SAFE_UNIT_PATH.fullmatch(path):
         raise ConfigError(f"{where}: unsafe absolute path")
     return str(p)
 
@@ -84,13 +95,16 @@ class ValueRef:
     @classmethod
     def parse(cls, value: Any, where: str, secret: bool = False) -> "ValueRef":
         if isinstance(value, (str, int, float, bool)) and not secret:
-            return cls(literal=str(value))
+            return cls(literal=safe_text(str(value), where))
         if not isinstance(value, dict):
             raise ConfigError(f"{where}: expected a reference mapping")
         allowed = {"from_env"} if secret else {"from_global"}
         keys = set(value)
         if len(keys) != 1 or not keys <= allowed:
             raise ConfigError(f"{where}: invalid reference")
+        reference = value.get("from_env") if secret else value.get("from_global")
+        if not isinstance(reference, str) or not SAFE_ENV_NAME.fullmatch(reference):
+            raise ConfigError(f"{where}: invalid environment variable name")
         return cls(from_global=value.get("from_global"), from_env=value.get("from_env"))
 
 
@@ -151,17 +165,23 @@ class Deployment:
             raise ConfigError(f"{source_name}: service.privileged must be boolean")
         if not SAFE_USER.fullmatch(user) or (user == "root" and not privileged) or (privileged and user != "root"):
             raise ConfigError(f"{source_name}: invalid service user")
-        command = str(_required(runtime, "command", source_name)).strip()
+        command = safe_text(str(_required(runtime, "command", source_name)).strip(),
+                            f"{source_name}: runtime.command", systemd=True)
         if not command.startswith("./") or ".." in PurePosixPath(command.split()[0]).parts:
             raise ConfigError(f"{source_name}: runtime command must be relative to the release")
-        wd = str(runtime.get("working_directory", "."))
-        if PurePosixPath(wd).is_absolute() or ".." in PurePosixPath(wd).parts:
+        wd = safe_text(str(runtime.get("working_directory", ".")),
+                       f"{source_name}: runtime.working_directory", systemd=True)
+        if (PurePosixPath(wd).is_absolute() or ".." in PurePosixPath(wd).parts or
+                not SAFE_UNIT_PATH.fullmatch(wd)):
             raise ConfigError(f"{source_name}: unsafe working_directory")
         restart = str(runtime.get("restart", "always"))
         if restart not in {"always", "on-failure", "no"}:
             raise ConfigError(f"{source_name}: invalid restart policy")
         env = {str(k): ValueRef.parse(v, f"environment.{k}") for k, v in (data.get("environment") or {}).items()}
         secrets = {str(k): ValueRef.parse(v, f"secrets.{k}", True) for k, v in (data.get("secrets") or {}).items()}
+        invalid_keys = [key for key in (*env, *secrets) if not SAFE_ENV_NAME.fullmatch(key)]
+        if invalid_keys:
+            raise ConfigError(f"{source_name}: invalid environment variable name: {invalid_keys[0]}")
         stores = tuple(Storage(str(k), safe_absolute(str(v.get("path", "")), f"storage.{k}"))
                        for k, v in (data.get("storage") or {}).items() if isinstance(v, dict))
         proxy_data = data.get("http_proxy")
@@ -195,6 +215,7 @@ class Deployment:
             include_source = local_path(str(_required(item, "source", f"release.include[{index}]")), path.parent,
                                         f"{source_name}: release.include[{index}].source")
             target = str(_required(item, "target", f"release.include[{index}]"))
+            safe_text(target, f"{source_name}: release.include[{index}].target")
             target_path = PurePosixPath(target)
             if target_path.is_absolute() or ".." in target_path.parts or target in ("", "."):
                 raise ConfigError(f"{source_name}: unsafe release include target")

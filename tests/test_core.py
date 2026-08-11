@@ -30,6 +30,34 @@ def test_validation_rejects_unsafe_command(tmp_path):
                           "release": {"source": "x"}, "runtime": {"command": "/bin/sh"}}, tmp_path / "d.yaml")
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("working_directory", ".\nUser=root"),
+    ("working_directory", "app%N"),
+    ("command", "./run.sh\nUser=root"),
+])
+def test_systemd_fields_reject_directives_and_specifiers(tmp_path, field, value):
+    runtime = {"command": "./run.sh", field: value}
+    with pytest.raises(ConfigError):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "x"}, "runtime": runtime}, tmp_path / "d.yaml")
+
+
+@pytest.mark.parametrize("path", ["/var/lib/demo\nReadWritePaths=/", "/var/lib/demo%N", "/var/lib/demo data"])
+def test_systemd_and_nginx_paths_reject_unsafe_syntax(tmp_path, path):
+    with pytest.raises(ConfigError):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "x"}, "runtime": {"command": "./run.sh"},
+                          "storage": {"data": {"path": path}}}, tmp_path / "d.yaml")
+
+
+@pytest.mark.parametrize("key", ["BAD-NAME", "NAME\nINJECT", "1NAME"])
+def test_environment_keys_reject_invalid_names(tmp_path, key):
+    with pytest.raises(ConfigError, match="environment variable name"):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "x"}, "runtime": {"command": "./run.sh"},
+                          "environment": {key: "value"}}, tmp_path / "d.yaml")
+
+
 def test_missing_environment_file_never_matches():
     assert env_matches(None, {"TOKEN": "redacted"}, {"TOKEN"}, False) is False
 
