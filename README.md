@@ -20,6 +20,8 @@ Host packages, firewalls, TLS issuance, databases, DNS, kernel settings, and
 unrelated users remain owned by host administration. The core product boundary
 is a single-host deployment transaction.
 
+![Animated vps-deployer walkthrough: plan, apply, and verify](docs/assets/vps-deployer-demo.gif)
+
 ```mermaid
 flowchart LR
     subgraph workstation["Operator workstation"]
