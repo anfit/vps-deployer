@@ -57,7 +57,7 @@ def run(args) -> int:
             print(f"host: {host.name}\nssh: connected")
             for argv, label in checks:
                 result = remote.run(argv, check=False); print(f"{label}: {result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout else 'unavailable'}")
-            privilege = remote.run(["test", "-e", "/srv/vps-deployer"], sudo=True, check=False)
+            privilege = remote.run(["test", "-e", host.managed_root], sudo=True, check=False)
             print(f"privileged access: {'available' if privilege.returncode in (0, 1) else 'unavailable'}")
             print(f"managed root: {'present' if remote.exists(host.managed_root, True) else 'absent'}"); return 0
         remote.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
