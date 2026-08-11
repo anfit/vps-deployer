@@ -4,6 +4,8 @@ import tarfile
 
 import pytest
 
+from vps_deployer import __version__
+from vps_deployer.cli import parser
 from vps_deployer.config import Repository
 from vps_deployer.deployment import (application_build_properties, content_hash,
                                      env_file, env_matches, git_metadata,
@@ -12,6 +14,13 @@ from vps_deployer.deployment import (application_build_properties, content_hash,
 from vps_deployer.models import ConfigError, Deployment, Host
 from vps_deployer.systemd import render_timer, render_unit, timer_name, unit_name
 from vps_deployer.nginx import render_proxy
+
+
+def test_cli_reports_package_version(capsys):
+    with pytest.raises(SystemExit) as exc:
+        parser().parse_args(["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == f"vps-deployer {__version__}"
 
 
 class RecordingRemote:

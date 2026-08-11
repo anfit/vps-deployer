@@ -4,13 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vps-deployer"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Manage isolated systemd deployments on existing VPS hosts over SSH"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Systems Administration",
+]
+
+[project.urls]
+Repository = "https://github.com/anfit/vps-deployer"
 
 [project.scripts]
 vps-deployer = "vps_deployer.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "vps_deployer.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

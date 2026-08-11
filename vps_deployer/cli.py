@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
+from . import __version__
 from .config import Repository
 from .deployment import Reconciler, git_metadata, release_id, select_rollback
 from .models import ConfigError
@@ -14,6 +15,7 @@ from .expectations import evaluate_expectations
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vps-deployer")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--repo", type=Path, default=Path.cwd(), help="infra repository root")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)

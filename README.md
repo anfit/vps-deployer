@@ -113,6 +113,7 @@ release directories are pruned. Failed deployments do not trigger cleanup.
 ## Commands
 
 ```console
+vps-deployer --version
 vps-deployer validate
 vps-deployer check DEPLOYMENT
 vps-deployer host inspect HOST
@@ -159,3 +160,15 @@ or host administration path.
 
 Secrets are accepted only through explicitly declared process-environment
 references and are never printed by planning or validation.
+
+## Versioning and compatibility
+
+Version 1.0 establishes the stable public contracts for deployment manifests,
+the `.deployer/` application interface, generated `build.properties`, CLI
+commands, and the restricted SSH gate protocol. Compatible additions are made
+within the 1.x series; incompatible contract changes require a new major
+version and explicit migration documentation.
+
+The client and server-side SSH gate are one security-sensitive protocol pair.
+When release notes identify a gate protocol change, install the matching gate
+before using the new client against a restricted-key host.
