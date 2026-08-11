@@ -71,7 +71,7 @@ def content_hash(source: Path, includes=()) -> str:
     if commit:
         digest.update(b"git-commit")
         digest.update(commit.encode())
-    return digest.hexdigest()[:7]
+    return digest.hexdigest()[:16]
 
 
 def _ignored(root: Path, path: Path) -> bool:

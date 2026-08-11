@@ -247,6 +247,7 @@ def test_content_hash_honors_repository_ignore_file(tmp_path):
     source = tmp_path / "a"; source.mkdir(); (source / "app.py").write_text("app")
     (source / ".vps-deployer-ignore").write_text("local.properties\nhelpers/*\n")
     first = content_hash(source)
+    assert len(first) == 16
     (source / "local.properties").write_text("secret")
     helpers = source / "helpers"; helpers.mkdir(); (helpers / "debug.py").write_text("local")
     assert content_hash(source) == first

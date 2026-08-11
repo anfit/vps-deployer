@@ -49,7 +49,7 @@ files and `.git` do not enter the archive.
 Every installed release receives `build.properties`:
 
 ```properties
-release.id=4d9901a
+release.id=4d9901a72c81e240
 commit.hash=<full Git SHA>
 commit.timestamp=<ISO-8601 commit time>
 build.timestamp=<UTC deployment time>

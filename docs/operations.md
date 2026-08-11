@@ -51,7 +51,9 @@ For timer deployments, status requires the timer to be active instead of the
 oneshot service. Logs still come from the associated `.service` unit.
 
 Use `--release-id ID` only for deliberate operator-controlled release naming.
-Content-addressed IDs are safer for ordinary deployments.
+Source-state-addressed IDs are safer for ordinary deployments. Automatic IDs use
+16 hexadecimal characters; upgrading from older clients creates one new release
+because the former default used seven characters.
 
 ## Logs
 
