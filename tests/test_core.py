@@ -521,6 +521,59 @@ def test_invalid_nginx_candidate_restores_previous_enabled_site(tmp_path):
     assert ["rm", "-f", candidate] in commands
 
 
+def test_nginx_reload_failure_restores_previous_site_content(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    from vps_deployer.remote import RemoteError
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"},
+                            "http_proxy": {"name": "demo", "domain": "demo.test",
+                                           "upstream": "http://127.0.0.1:5100", "tls": False}},
+                           tmp_path / "d.yaml")
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    class FailedReloadRemote(RecordingRemote):
+        failed = False
+        def run(self, argv, **kwargs):
+            super().run(argv, **kwargs)
+            if argv == ["systemctl", "reload", "nginx"] and not self.failed:
+                self.failed = True
+                raise RemoteError("reload failed")
+    remote = FailedReloadRemote()
+    reconciler = Reconciler(repo, dep, remote, "same")
+    remote.files[str(reconciler.proxy_enabled)] = "symlink"
+    remote.files[str(reconciler.proxy_available)] = "OLD\n"
+    with pytest.raises(RemoteError):
+        reconciler._reconcile_proxy()
+    writes = [call[0] for call in remote.calls if call[0][0] == "write_file"]
+    assert any(call[1] == str(reconciler.proxy_available) and call[2] == b"OLD\n"
+               for call in writes)
+
+
+def test_proxy_removal_reload_failure_restores_file_and_link(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    from vps_deployer.remote import RemoteError
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    class FailedReloadRemote(RecordingRemote):
+        failed = False
+        def run(self, argv, **kwargs):
+            super().run(argv, **kwargs)
+            if argv == ["systemctl", "reload", "nginx"] and not self.failed:
+                self.failed = True
+                raise RemoteError("reload failed")
+    remote = FailedReloadRemote()
+    reconciler = Reconciler(repo, dep, remote, "same")
+    available = "/etc/nginx/sites-available/old-proxy"
+    enabled = "/etc/nginx/sites-enabled/old-proxy"
+    remote.files[available] = "OLD\n"; remote.files[enabled] = "symlink"
+    with pytest.raises(RemoteError):
+        reconciler._remove_proxy("old-proxy")
+    commands = [call[0] for call in remote.calls]
+    assert ["ln", "-sfn", available, enabled] in commands
+    assert any(call[0][0] == "write_file" and call[0][1] == available and call[0][2] == b"OLD\n"
+               for call in remote.calls)
+
+
 @pytest.mark.parametrize(("name", "kind"), [
     ("../outside", "file"),
     ("/etc/shadow", "file"),

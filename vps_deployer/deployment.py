@@ -387,7 +387,8 @@ class Reconciler:
     def _reconcile_proxy(self) -> None:
         desired = render_proxy(self.dep)
         enabled_exists = self.remote.exists(str(self.proxy_enabled), sudo=True)
-        if self.remote.read(str(self.proxy_available), sudo=True) == desired and enabled_exists:
+        previous = self.remote.read(str(self.proxy_available), sudo=True)
+        if previous == desired and enabled_exists:
             return
         candidate_name = f"vps-candidate-{hashlib.sha256(self.dep.name.encode()).hexdigest()[:16]}"
         candidate = f"/etc/nginx/sites-available/{candidate_name}"
@@ -401,11 +402,16 @@ class Reconciler:
                 self.remote.run(["rm", "-f", candidate], sudo=True)
                 self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
             except (RemoteError, RuntimeError):
-                if enabled_exists:
+                if previous is not None:
+                    self._write_privileged(str(self.proxy_available), previous, "0644", "root:root")
+                else:
+                    self.remote.run(["rm", "-f", str(self.proxy_available)], sudo=True)
+                if enabled_exists and previous is not None:
                     self.remote.run(["ln", "-sfn", str(self.proxy_available), str(self.proxy_enabled)], sudo=True)
                 else:
                     self.remote.run(["rm", "-f", str(self.proxy_enabled)], sudo=True)
                 self.remote.run(["rm", "-f", candidate], sudo=True)
+                self.remote.run(["systemctl", "reload", "nginx"], sudo=True, check=False)
                 raise
 
     def _reconcile_obsolete_resources(self, previous: dict[str, object]) -> None:
@@ -423,15 +429,24 @@ class Reconciler:
     def _remove_proxy(self, proxy: str) -> None:
         available = f"/etc/nginx/sites-available/{proxy}"
         enabled = f"/etc/nginx/sites-enabled/{proxy}"
+        previous = self.remote.read(available, sudo=True)
+        enabled_exists = self.remote.exists(enabled, sudo=True)
         with self.remote.deployment_lock("nginx"):
             self.remote.run(["rm", "-f", enabled], sudo=True)
             try:
                 self.remote.run(["nginx", "-t"], sudo=True)
-            except RemoteError:
-                self.remote.run(["ln", "-sfn", available, enabled], sudo=True)
+                self.remote.run(["rm", "-f", available], sudo=True)
+                self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
+            except (RemoteError, RuntimeError):
+                if previous is not None:
+                    self._write_privileged(available, previous, "0644", "root:root")
+                if enabled_exists and previous is not None:
+                    self.remote.run(["ln", "-sfn", available, enabled], sudo=True)
+                else:
+                    self.remote.run(["rm", "-f", enabled], sudo=True)
+                self.remote.run(["nginx", "-t"], sudo=True, check=False)
+                self.remote.run(["systemctl", "reload", "nginx"], sudo=True, check=False)
                 raise
-            self.remote.run(["rm", "-f", available], sudo=True)
-            self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
 
     def _prune_releases(self, previous: str) -> None:
         releases_path = f"{self.base}/releases"
