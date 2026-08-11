@@ -149,7 +149,8 @@ never deleted by rollback or remove.
 ### Health check
 
 HTTP health checks use curl from the target host with bounded retries. Prefer a
-loopback URL so application health is tested independently of DNS and TLS.
+loopback URL so application health is tested independently of DNS and TLS. URLs
+must use `http://127.0.0.1:<port>/...` with a valid TCP port.
 Health checks and HTTP proxies are not valid for timer deployments; status checks
 that the timer unit is active instead.
 

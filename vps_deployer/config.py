@@ -34,6 +34,15 @@ class Repository:
         return repo
 
     def validate(self) -> None:
+        claims: dict[tuple[str, str, str], str] = {}
+
+        def claim(dep: Deployment, kind: str, value: str) -> None:
+            key = (dep.host, kind, value)
+            owner = claims.get(key)
+            if owner and owner != dep.name:
+                raise ConfigError(f"{dep.name}: {kind} {value} conflicts with {owner} on host {dep.host}")
+            claims[key] = dep.name
+
         for dep in self.deployments.values():
             if dep.host not in self.hosts:
                 raise ConfigError(f"{dep.name}: unknown host {dep.host}")
@@ -41,6 +50,16 @@ class Repository:
             for key, ref in dep.environment.items():
                 if ref.from_global and ref.from_global not in globals_for_dep:
                     raise ConfigError(f"{dep.name}: unknown global reference {ref.from_global} for {key}")
+            for storage in dep.storage:
+                claim(dep, "storage path", storage.path)
+            if dep.healthcheck:
+                port = dep.healthcheck["url"].split(":", 2)[2].split("/", 1)[0]
+                claim(dep, "loopback port", port)
+            if dep.http_proxy:
+                claim(dep, "proxy name", dep.http_proxy.name)
+                claim(dep, "proxy domain", dep.http_proxy.domain)
+                port = dep.http_proxy.upstream.rsplit(":", 1)[1]
+                claim(dep, "loopback port", port)
 
     def _global_values(self, dep: Deployment) -> dict[str, str]:
         # Prefer a globals file matching the suffix (foo-prod -> prod), then host, then merge all if unique.

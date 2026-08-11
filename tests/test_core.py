@@ -174,6 +174,50 @@ def test_http_only_proxy_rejects_certificate_fields(tmp_path):
         }, tmp_path / "dev.yaml")
 
 
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1:5100/health",
+    "http://example.com:5100/health",
+    "http://127.0.0.1:70000/health",
+    "http://127.0.0.1:5100/health\nInjected: yes",
+])
+def test_healthcheck_requires_bounded_loopback_http_url(tmp_path, url):
+    with pytest.raises(ConfigError, match="healthcheck"):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "x"}, "runtime": {"command": "./run.sh"},
+                          "healthcheck": {"type": "http", "url": url}}, tmp_path / "d.yaml")
+
+
+@pytest.mark.parametrize("upstream", ["http://127.0.0.1:70000", "http://localhost:5100"])
+def test_proxy_rejects_invalid_loopback_upstream(tmp_path, upstream):
+    with pytest.raises(ConfigError, match="route"):
+        Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                          "release": {"source": "x"}, "runtime": {"command": "./run.sh"},
+                          "http_proxy": {"domain": "demo.test", "upstream": upstream, "tls": False}},
+                         tmp_path / "d.yaml")
+
+
+@pytest.mark.parametrize("collision", ["storage", "proxy", "port"])
+def test_repository_rejects_same_host_resource_collisions(tmp_path, collision):
+    repo = Repository(tmp_path)
+    repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    def make(name, port, storage, proxy):
+        data = {"name": name, "host": "prod", "service": {"user": f"svc-{name}"},
+                "release": {"source": "x"}, "runtime": {"command": "./run.sh"},
+                "storage": {"data": {"path": storage}},
+                "healthcheck": {"type": "http", "url": f"http://127.0.0.1:{port}/health"},
+                "http_proxy": {"name": proxy, "domain": f"{name}.test",
+                               "upstream": f"http://127.0.0.1:{port}", "tls": False}}
+        return Deployment.parse(data, tmp_path / f"{name}.yaml")
+    first = make("one", "5101", "/var/lib/one", "one")
+    second = make("two", "5102", "/var/lib/two", "two")
+    if collision == "storage": second = make("two", "5102", "/var/lib/one", "two")
+    if collision == "proxy": second = make("two", "5102", "/var/lib/two", "one")
+    if collision == "port": second = make("two", "5101", "/var/lib/two", "two")
+    repo.deployments = {first.name: first, second.name: second}
+    with pytest.raises(ConfigError, match="conflicts"):
+        repo.validate()
+
+
 def test_content_hash_is_stable_and_content_sensitive(tmp_path):
     source = tmp_path / "a"; source.mkdir(); file = source / "x"; file.write_text("one")
     first = content_hash(source)

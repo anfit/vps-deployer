@@ -192,8 +192,11 @@ class Deployment:
         invalid_keys = [key for key in (*env, *secrets) if not SAFE_ENV_NAME.fullmatch(key)]
         if invalid_keys:
             raise ConfigError(f"{source_name}: invalid environment variable name: {invalid_keys[0]}")
+        storage_data = data.get("storage") or {}
+        if not isinstance(storage_data, dict) or any(not isinstance(value, dict) for value in storage_data.values()):
+            raise ConfigError(f"{source_name}: storage must be a mapping of mappings")
         stores = tuple(Storage(str(k), safe_absolute(str(v.get("path", "")), f"storage.{k}"))
-                       for k, v in (data.get("storage") or {}).items() if isinstance(v, dict))
+                       for k, v in storage_data.items())
         proxy_data = data.get("http_proxy")
         proxy = None
         if proxy_data is not None:
@@ -204,7 +207,9 @@ class Deployment:
             upstream = str(_required(proxy_data, "upstream", source_name))
             if not SAFE_NAME.fullmatch(proxy_name):
                 raise ConfigError(f"{source_name}: invalid http_proxy.name")
-            if not re.fullmatch(r"[A-Za-z0-9.-]+", domain) or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", upstream):
+            upstream_match = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})", upstream)
+            if (not re.fullmatch(r"[A-Za-z0-9.-]+", domain) or not upstream_match or
+                    int(upstream_match.group(1)) > 65535):
                 raise ConfigError(f"{source_name}: invalid http_proxy route")
             tls = proxy_data.get("tls", True)
             if not isinstance(tls, bool):
@@ -231,6 +236,16 @@ class Deployment:
             if data.get("healthcheck") is not None or proxy is not None:
                 raise ConfigError(f"{source_name}: timer deployments cannot declare healthcheck or http_proxy")
             timer = Timer(on_calendar, persistent, delay)
+        healthcheck = data.get("healthcheck")
+        if healthcheck is not None:
+            if not isinstance(healthcheck, dict) or set(healthcheck) != {"type", "url"}:
+                raise ConfigError(f"{source_name}: healthcheck must contain only type and url")
+            health_type = str(healthcheck.get("type"))
+            health_url = safe_text(str(healthcheck.get("url", "")), f"{source_name}: healthcheck.url")
+            match = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})(/[^\s]*)?", health_url)
+            if health_type != "http" or not match or int(match.group(1)) > 65535:
+                raise ConfigError(f"{source_name}: healthcheck must be a loopback HTTP URL")
+            healthcheck = {"type": health_type, "url": health_url}
         src = local_path(str(_required(release, "source", source_name)), path.parent, f"{source_name}: release.source")
         includes: list[ReleaseInclude] = []
         for index, item in enumerate(release.get("include", []) or []):
@@ -245,4 +260,4 @@ class Deployment:
                 raise ConfigError(f"{source_name}: unsafe release include target")
             includes.append(ReleaseInclude(include_source, target))
         return cls(name, str(_required(data, "host", source_name)), user, privileged, src, tuple(includes), command, wd, restart,
-                   data.get("healthcheck"), env, secrets, stores, proxy, timer, path)
+                   healthcheck, env, secrets, stores, proxy, timer, path)
