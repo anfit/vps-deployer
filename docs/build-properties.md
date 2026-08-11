@@ -31,6 +31,6 @@ Source files must not predefine `deployment.` keys that the deployer supplies;
 doing so is rejected instead of silently replacing provenance. `status` verifies
 the active `deployment.release` and, for Git sources, `deployment.commit`.
 
-Tar artifacts should already contain their application build properties. At
-present vps-deployer can safely merge application properties only for directory
-sources; tar deployments receive the deployment namespace in the installed file.
+Tar artifacts may contain the same root `build.properties`. vps-deployer parses
+it with the same strict rules and preserves its application/build properties
+before appending the deployment namespace.

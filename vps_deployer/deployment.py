@@ -81,6 +81,27 @@ def render_build_properties(application: dict[str, str], deployment: dict[str, s
     return "".join(f"{key}={value}\n" for key, value in sorted({**application, **deployment}.items()))
 
 
+def application_build_properties(source: Path) -> dict[str, str]:
+    if source.is_dir():
+        path = source / "build.properties"
+        return parse_build_properties(path.read_text(encoding="utf-8"), str(path)) if path.is_file() else {}
+    try:
+        with tarfile.open(source, "r:gz") as archive:
+            members = [member for member in archive.getmembers()
+                       if PurePosixPath(member.name) == PurePosixPath("build.properties")]
+            if len(members) > 1:
+                raise ConfigError("release archive contains duplicate build.properties")
+            if not members:
+                return {}
+            stream = archive.extractfile(members[0])
+            if stream is None:
+                raise ConfigError("release archive build.properties is not a regular file")
+            return parse_build_properties(stream.read().decode("utf-8"),
+                                          f"{source}:build.properties")
+    except UnicodeDecodeError as exc:
+        raise ConfigError("release archive build.properties is not UTF-8") from exc
+
+
 def git_metadata(source: Path, release: str,
                  build_time: datetime | None = None) -> tuple[str | None, str]:
     """Compatibility wrapper returning rendered deployment provenance."""
@@ -448,12 +469,7 @@ class Reconciler:
             self.remote.run(["chown", "-R", f"root:{self.dep.user}", self.release_path], sudo=True)
             self.remote.run(["chmod", "-R", "u=rwX,g=rX,o=", self.release_path], sudo=True)
             metadata_source = self.dep.source if self.dep.source.is_dir() else self.dep.source.parent
-            application: dict[str, str] = {}
-            if self.dep.source.is_dir():
-                properties_path = self.dep.source / "build.properties"
-                if properties_path.is_file():
-                    application = parse_build_properties(
-                        properties_path.read_text(encoding="utf-8"), str(properties_path))
+            application = application_build_properties(self.dep.source)
             _, deployment = deployment_metadata(metadata_source, self.release)
             properties = render_build_properties(application, deployment)
             self._write_privileged(f"{self.release_path}/build.properties", properties, "0640", f"root:{self.dep.user}")

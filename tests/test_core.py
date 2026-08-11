@@ -1,10 +1,12 @@
 from pathlib import Path
 import os
+import tarfile
 
 import pytest
 
 from vps_deployer.config import Repository
-from vps_deployer.deployment import (content_hash, env_file, env_matches, git_metadata,
+from vps_deployer.deployment import (application_build_properties, content_hash,
+                                     env_file, env_matches, git_metadata,
                                      parse_build_properties, render_build_properties,
                                      releases_to_prune, select_rollback, validate_archive)
 from vps_deployer.models import ConfigError, Deployment, Host
@@ -400,6 +402,27 @@ def test_build_properties_reject_ambiguous_input(content):
 def test_application_cannot_claim_deployment_properties():
     with pytest.raises(ConfigError, match="application-defined"):
         render_build_properties({"deployment.release": "fake"},
+                                {"deployment.release": "actual"})
+
+
+def test_tar_release_preserves_application_build_properties(tmp_path):
+    source = tmp_path / "source"; source.mkdir()
+    (source / "build.properties").write_text("build.version=1.2.3\ncommit.hash=abc123\n")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(source / "build.properties", arcname="build.properties")
+    assert application_build_properties(archive) == {
+        "build.version": "1.2.3", "commit.hash": "abc123"}
+
+
+def test_tar_release_rejects_reserved_deployment_properties(tmp_path):
+    source = tmp_path / "build.properties"
+    source.write_text("deployment.release=fake\n")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(source, arcname="build.properties")
+    with pytest.raises(ConfigError, match="application-defined"):
+        render_build_properties(application_build_properties(archive),
                                 {"deployment.release": "actual"})
 
 
