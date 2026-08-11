@@ -427,11 +427,23 @@ class Reconciler:
     def supervisor_name(self) -> str:
         return timer_name(self.dep) if self.dep.timer else unit_name(self.dep)
 
+    def timer_status(self) -> dict[str, str]:
+        if not self.dep.timer:
+            return {}
+        result = self.remote.run(["systemctl", "show", unit_name(self.dep), "--no-pager",
+                                  "--property=Result", "--property=ExecMainStatus",
+                                  "--property=ExecMainExitTimestamp"], sudo=True, check=False)
+        return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+
     def _healthy(self) -> bool:
         hc = self.dep.healthcheck
         if self.dep.timer:
-            return self.remote.run(["systemctl", "is-active", "--quiet", timer_name(self.dep)],
-                                   sudo=True, check=False).returncode == 0
+            active = self.remote.run(["systemctl", "is-active", "--quiet", timer_name(self.dep)],
+                                     sudo=True, check=False).returncode == 0
+            status = self.timer_status()
+            last_result = status.get("Result", "success")
+            last_exit = status.get("ExecMainStatus", "0")
+            return active and last_result == "success" and last_exit == "0"
         if not hc:
             return self.remote.run(["systemctl", "is-active", "--quiet", unit_name(self.dep)], sudo=True, check=False).returncode == 0
         if hc.get("type") != "http" or not hc.get("url"):

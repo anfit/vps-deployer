@@ -48,7 +48,9 @@ check passes, and the active `build.properties` matches the desired release and
 Git commit.
 
 For timer deployments, status requires the timer to be active instead of the
-oneshot service. Logs still come from the associated `.service` unit.
+oneshot service and reports the last job completion time, systemd result, and
+exit status. A failed last invocation makes status unhealthy. Logs still come
+from the associated `.service` unit.
 
 Use `--release-id ID` only for deliberate operator-controlled release naming.
 Source-state-addressed IDs are safer for ordinary deployments. Automatic IDs use

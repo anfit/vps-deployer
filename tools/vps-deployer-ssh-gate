@@ -86,6 +86,10 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
         units = [value for value in args[1:] if not value.startswith("-")]
         if args and args[0] in actions and units and all(SAFE_UNIT.fullmatch(unit) for unit in units):
             return ["systemctl", *args]
+        if (len(args) == 6 and args[0] == "show" and SAFE_UNIT.fullmatch(args[1]) and
+                args[2:] == ["--no-pager", "--property=Result", "--property=ExecMainStatus",
+                             "--property=ExecMainExitTimestamp"]):
+            return ["systemctl", *args]
     if operation == "validate-nginx" and args == ["-t"]:
         return ["nginx", "-t"]
     if operation == "set-link" and len(args) == 3 and args[0] in {"-s", "-sfn"}:

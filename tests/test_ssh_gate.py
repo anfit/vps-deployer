@@ -67,6 +67,16 @@ def test_gate_lock_is_scoped_to_a_deployment_name():
         build_argv(request("hold-lock", "../other"), ROOT, STORAGE)
 
 
+def test_gate_allows_only_fixed_timer_result_inspection():
+    operation = request("service-control", "show", "vps-deployer-demo.service", "--no-pager",
+                        "--property=Result", "--property=ExecMainStatus",
+                        "--property=ExecMainExitTimestamp")
+    assert build_argv(operation, ROOT, STORAGE)[0] == "systemctl"
+    operation["arguments"][-1] = "--property=Environment"
+    with pytest.raises(ValueError):
+        build_argv(operation, ROOT, STORAGE)
+
+
 @pytest.mark.parametrize("value", ["bad\nvalue", "bad\tvalue", "bad\u202evalue", "bad\u2028value"])
 def test_gate_rejects_ascii_and_unicode_controls(value):
     with pytest.raises(ValueError):

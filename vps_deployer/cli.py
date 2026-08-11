@@ -96,6 +96,11 @@ def run(args) -> int:
               f"desired release: {desired}\nactive release: {active or 'none'}\nhealth: {health}\nuser: {dep.user}")
         print(f"desired commit: {desired_commit or 'unversioned'}\nactive commit: {manifest.get('commit.hash', 'missing')}\n"
               f"manifest: {'current' if manifest_ok else 'stale or missing'}")
+        if dep.timer:
+            timer_status = rec.timer_status()
+            print(f"last job: {timer_status.get('ExecMainExitTimestamp') or 'never'}\n"
+                  f"last result: {timer_status.get('Result', 'unknown')}\n"
+                  f"last exit status: {timer_status.get('ExecMainStatus', 'unknown')}")
         if service.returncode: print(remote.run(["systemctl", "status", supervisor, "--no-pager", "--lines=20"], sudo=True, check=False).stdout)
         return 0 if healthy else 1
     if args.command == "logs":

@@ -141,6 +141,30 @@ def test_timer_rejects_persistent_service_features(tmp_path):
                          tmp_path / "timer.yaml")
 
 
+def test_timer_health_includes_last_job_result(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({"name": "cleanup", "host": "prod", "service": {"user": "svc-cleanup"},
+                            "release": {"source": str(artifact)}, "runtime": {"command": "./cleanup.sh"},
+                            "timer": {"on_calendar": "daily"}}, tmp_path / "timer.yaml")
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    from vps_deployer.remote import Result
+    class TimerRemote(RecordingRemote):
+        result = "success"
+        exit_status = "0"
+        def run(self, argv, **kwargs):
+            if argv[:2] == ["systemctl", "is-active"]:
+                return Result("active\n", "", 0)
+            if argv[:2] == ["systemctl", "show"]:
+                return Result(f"Result={self.result}\nExecMainStatus={self.exit_status}\n"
+                              "ExecMainExitTimestamp=Tue 2026-08-11 08:00:00 UTC\n", "", 0)
+            return Result("", "", 0)
+    remote = TimerRemote(); reconciler = Reconciler(repo, dep, remote, "same")
+    assert reconciler._healthy()
+    remote.result = "exit-code"; remote.exit_status = "1"
+    assert not reconciler._healthy()
+
+
 def test_http_proxy_is_rendered_per_deployment(tmp_path):
     artifact = tmp_path / "artifact"; artifact.mkdir()
     dep = Deployment.parse({
