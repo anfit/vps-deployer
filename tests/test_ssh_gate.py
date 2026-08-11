@@ -61,6 +61,12 @@ def test_gate_never_reads_privileged_temporary_paths():
         build_argv(request("read-file", "/tmp/vps-deployer-demo-link"), ROOT, STORAGE)
 
 
+def test_gate_lock_is_scoped_to_a_deployment_name():
+    assert build_argv(request("hold-lock", "demo-prod"), ROOT, STORAGE) == ["__hold_lock__", "demo-prod"]
+    with pytest.raises(ValueError):
+        build_argv(request("hold-lock", "../other"), ROOT, STORAGE)
+
+
 @pytest.mark.parametrize("value", ["bad\nvalue", "bad\tvalue", "bad\u202evalue", "bad\u2028value"])
 def test_gate_rejects_ascii_and_unicode_controls(value):
     with pytest.raises(ValueError):

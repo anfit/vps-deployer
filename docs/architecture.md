@@ -71,6 +71,11 @@ the former active release is recorded explicitly by the `previous` symlink. Afte
 succeeds, older releases are deleted; only the active release and its immediate
 predecessor remain. Cleanup never runs after a failed activation.
 
+Apply holds a non-blocking host lock at
+`/run/lock/vps-deployer-<deployment>.lock` across the complete multi-command
+transaction. Concurrent applies for the same deployment fail without mutating
+state; independent deployments remain parallelizable.
+
 Nginx configuration is validated before reload. Each deployment reconciles only
 its declared proxy file, allowing several environments to share one VPS safely.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import base64
 import json
 from pathlib import Path
@@ -59,6 +60,7 @@ class RemoteHost:
             "find": "list-releases", "rm": "remove-paths", "tar": "extract-release",
             "chown": "set-ownership", "chmod": "set-mode", "journalctl": "service-logs",
             "write-file": "write-file",
+            "hold-lock": "hold-lock",
         }.get(command)
         if not operation:
             raise RemoteError(f"no privileged operation for command: {command}")
@@ -75,6 +77,27 @@ class RemoteHost:
                   "mv -fT \"$temp\" \"$target\"; trap - EXIT")
         self.run(["sh", "-c", script, "vps-deployer-write", path, owner, group, mode],
                  sudo=True, input_data=content)
+
+    @contextmanager
+    def deployment_lock(self, deployment: str):
+        if self.host.ssh.privileged_host is not None:
+            command = ["hold-lock", deployment]
+        else:
+            lock = f"/run/lock/vps-deployer-{deployment}.lock"
+            command = ["flock", "-n", lock, "sh", "-c", "echo LOCKED; cat >/dev/null"]
+        process = subprocess.Popen(self.ssh_argv(command, sudo=True), stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            ready = process.stdout.readline() if process.stdout else b""
+            if ready != b"LOCKED\n":
+                stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
+                process.wait()
+                raise RemoteError(f"deployment is locked or lock setup failed: {stderr.strip()}")
+            yield
+        finally:
+            if process.stdin:
+                process.stdin.close()
+            process.wait()
 
     def run(self, argv: list[str], *, sudo: bool = False, check: bool = True, input_data: bytes | None = None) -> Result:
         proc = subprocess.run(self.ssh_argv(argv, sudo), input=input_data, capture_output=True)

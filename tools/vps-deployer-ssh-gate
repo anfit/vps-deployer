@@ -77,6 +77,8 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
         if (_owned_file(target, managed_root, storage) and SAFE_USER.fullmatch(owner) and
                 SAFE_USER.fullmatch(group) and mode in {"0640", "0644"}):
             return ["__write_file__", target, owner, group, mode]
+    if operation == "hold-lock" and len(args) == 1 and SAFE_NAME.fullmatch(args[0]):
+        return ["__hold_lock__", args[0]]
     if operation == "service-control":
         if args in (["daemon-reload"], ["reset-failed"], ["reload", "nginx"]):
             return ["systemctl", *args]
@@ -137,6 +139,23 @@ def write_file(argv: list[str]) -> None:
             pass
 
 
+def hold_lock(deployment: str) -> None:
+    import fcntl
+    path = f"/run/lock/vps-deployer-{deployment}.lock"
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("deployment is already locked") from exc
+        sys.stdout.write("LOCKED\n")
+        sys.stdout.flush()
+        while sys.stdin.buffer.read(64 * 1024):
+            pass
+    finally:
+        os.close(descriptor)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--managed-root", default="/srv/vps-deployer")
@@ -155,6 +174,9 @@ def main() -> None:
     argv = build_argv(request, policy.managed_root, storage)
     if argv[0] == "__write_file__":
         write_file(argv)
+        return
+    if argv[0] == "__hold_lock__":
+        hold_lock(argv[1])
         return
     executable = shutil.which(argv[0])
     if not executable:

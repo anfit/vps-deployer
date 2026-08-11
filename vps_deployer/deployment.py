@@ -221,10 +221,12 @@ class Reconciler:
     def apply(self) -> list[Action]:
         if self.dep.privileged:
             raise ConfigError("privileged deployment requires explicit allow_privileged=True")
-        return self._apply()
+        with self.remote.deployment_lock(self.dep.name):
+            return self._apply()
 
     def apply_privileged(self) -> list[Action]:
-        return self._apply()
+        with self.remote.deployment_lock(self.dep.name):
+            return self._apply()
 
     def _apply(self) -> list[Action]:
         values, _ = self.repo.resolve_environment(self.dep, True)
