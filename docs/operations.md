@@ -22,6 +22,19 @@ When a host uses `privileged_host`, its dedicated key must use the current
 The gate protocol is versioned by its `vps-deployer-op` command prefix; update
 the server-side script and authorized-key policy together with client changes.
 
+To upgrade an existing host, copy both files from `tools/` to one directory and
+run as root:
+
+```console
+./upgrade-vps-deployer-ssh-gate --managed-root /srv/vps-deployer \
+  --storage /var/lib/example
+```
+
+The upgrader installs the gate, updates exactly one existing forced-command
+entry, preserves the rest of that authorized-key line, and writes a timestamped
+backup. If the host has no gate entry, it installs the executable and leaves SSH
+authorization unchanged.
+
 ## Validate and inspect
 
 ```powershell
