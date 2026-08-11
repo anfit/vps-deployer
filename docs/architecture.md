@@ -86,4 +86,6 @@ server-side with `tools/vps-deployer-ssh-gate`; it must not provide a general
 interactive root shell. The client sends operation names rather than executable
 names. The gate constructs fixed commands for those capabilities and is installed
 with an explicit managed root and allowlisted storage paths, so the key cannot
-operate on unrelated state elsewhere under `/var/lib`.
+operate on unrelated state elsewhere under `/var/lib`. Root-owned configuration
+is streamed to an atomic `write-file` capability; secret content is never staged
+at an unprivileged or shared temporary pathname.

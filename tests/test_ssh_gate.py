@@ -50,6 +50,17 @@ def test_gate_honors_configured_managed_root():
         build_argv(operation, ROOT, STORAGE)
 
 
+def test_gate_write_file_has_no_shared_temporary_path():
+    argv = build_argv(request("write-file", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"),
+                      ROOT, STORAGE)
+    assert argv == ["__write_file__", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"]
+
+
+def test_gate_never_reads_privileged_temporary_paths():
+    with pytest.raises(ValueError):
+        build_argv(request("read-file", "/tmp/vps-deployer-demo-link"), ROOT, STORAGE)
+
+
 @pytest.mark.parametrize("value", ["bad\nvalue", "bad\tvalue", "bad\u202evalue", "bad\u2028value"])
 def test_gate_rejects_ascii_and_unicode_controls(value):
     with pytest.raises(ValueError):

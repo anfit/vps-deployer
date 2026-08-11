@@ -58,10 +58,23 @@ class RemoteHost:
             "systemctl": "service-control", "nginx": "validate-nginx", "ln": "set-link",
             "find": "list-releases", "rm": "remove-paths", "tar": "extract-release",
             "chown": "set-ownership", "chmod": "set-mode", "journalctl": "service-logs",
+            "write-file": "write-file",
         }.get(command)
         if not operation:
             raise RemoteError(f"no privileged operation for command: {command}")
         return {"operation": operation, "arguments": argv[1:]}
+
+    def write_file(self, path: str, content: bytes, mode: str, owner: str, group: str) -> None:
+        if self.host.ssh.privileged_host is not None:
+            self.run(["write-file", path, owner, group, mode], sudo=True, input_data=content)
+            return
+        script = ("set -eu; target=$1; owner=$2; group=$3; mode=$4; "
+                  "temp=$(mktemp \"$(dirname \"$target\")/.vps-deployer.XXXXXX\"); "
+                  "trap 'rm -f \"$temp\"' EXIT; chmod 0600 \"$temp\"; cat > \"$temp\"; "
+                  "chown \"$owner:$group\" \"$temp\"; chmod \"$mode\" \"$temp\"; "
+                  "mv -fT \"$temp\" \"$target\"; trap - EXIT")
+        self.run(["sh", "-c", script, "vps-deployer-write", path, owner, group, mode],
+                 sudo=True, input_data=content)
 
     def run(self, argv: list[str], *, sudo: bool = False, check: bool = True, input_data: bytes | None = None) -> Result:
         proc = subprocess.run(self.ssh_argv(argv, sudo), input=input_data, capture_output=True)

@@ -10,6 +10,7 @@ from pathlib import PurePosixPath
 import re
 import shutil
 import sys
+import tempfile
 import unicodedata
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -34,8 +35,11 @@ def _owned_file(path: str, managed_root: str, storage: set[str]) -> bool:
     return (_deployment_path(path, managed_root) or path in storage or
             re.fullmatch(r"/etc/vps-deployer/[a-z][a-z0-9-]{0,62}\.env", path) is not None or
             re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.(service|timer)", path) is not None or
-            re.fullmatch(r"/etc/nginx/sites-(available|enabled)/[a-z][a-z0-9-]{0,62}", path) is not None or
-            re.fullmatch(r"/tmp/vps-deployer-[A-Za-z0-9._-]+", path) is not None)
+            re.fullmatch(r"/etc/nginx/sites-(available|enabled)/[a-z][a-z0-9-]{0,62}", path) is not None)
+
+
+def _upload_path(path: str) -> bool:
+    return re.fullmatch(r"/tmp/vps-deployer-[A-Za-z0-9._-]+\.tar\.gz", path) is not None
 
 
 def build_argv(request: dict[str, object], managed_root: str, storage: set[str]) -> list[str]:
@@ -67,13 +71,12 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
             owner, group, mode, path = args[2], args[4], args[6], args[7]
             if SAFE_USER.fullmatch(owner) and group == owner and mode == "0750" and path in storage:
                 return ["install", *args]
-        if len(args) == 8 and args[0] == "-o" and args[2] == "-g" and args[4] == "-m":
-            owner, group, mode, source, target = args[1], args[3], args[5], args[6], args[7]
-            if (SAFE_USER.fullmatch(owner) and SAFE_USER.fullmatch(group) and
-                    mode in {"0640", "0644"} and _owned_file(source, managed_root, storage) and
-                    source.startswith("/tmp/vps-deployer-") and _owned_file(target, managed_root, storage)):
-                return ["install", *args]
         raise ValueError("install operation is outside policy")
+    if operation == "write-file" and len(args) == 4:
+        target, owner, group, mode = args
+        if (_owned_file(target, managed_root, storage) and SAFE_USER.fullmatch(owner) and
+                SAFE_USER.fullmatch(group) and mode in {"0640", "0644"}):
+            return ["__write_file__", target, owner, group, mode]
     if operation == "service-control":
         if args in (["daemon-reload"], ["reset-failed"], ["reload", "nginx"]):
             return ["systemctl", *args]
@@ -90,9 +93,9 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
             return ["ln", *args]
     if operation == "list-releases" and len(args) == 8 and _deployment_path(args[0], managed_root) and args[1:] == ["-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print"]:
         return ["find", *args]
-    if operation == "extract-release" and len(args) == 4 and args[0] == "-xzf" and args[2] == "-C" and args[1].startswith("/tmp/vps-deployer-") and _deployment_path(args[3], managed_root):
+    if operation == "extract-release" and len(args) == 4 and args[0] == "-xzf" and args[2] == "-C" and _upload_path(args[1]) and _deployment_path(args[3], managed_root):
         return ["tar", "--no-same-owner", "--no-same-permissions", "-xzf", args[1], "-C", args[3]]
-    if operation == "remove-paths" and args and args[0] in {"-f", "-rf"} and all(_owned_file(path, managed_root, storage) for path in args[1:]):
+    if operation == "remove-paths" and args and args[0] in {"-f", "-rf"} and all(_owned_file(path, managed_root, storage) or _upload_path(path) for path in args[1:]):
         if args[0] != "-rf" or all("/releases/" in path and _deployment_path(path, managed_root) for path in args[1:]):
             return ["rm", *args]
     if operation == "set-ownership" and len(args) == 3 and args[0] == "-R" and re.fullmatch(r"root:[a-z_][a-z0-9_-]{0,31}", args[1]) and _deployment_path(args[2], managed_root):
@@ -113,6 +116,27 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
     raise ValueError("operation is not allowed")
 
 
+def write_file(argv: list[str]) -> None:
+    import grp
+    import pwd
+    _, target, owner, group, mode = argv
+    parent = str(PurePosixPath(target).parent)
+    descriptor, temporary = tempfile.mkstemp(prefix=".vps-deployer-", dir=parent)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            shutil.copyfileobj(sys.stdin.buffer, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchown(stream.fileno(), pwd.getpwnam(owner).pw_uid, grp.getgrnam(group).gr_gid)
+            os.fchmod(stream.fileno(), int(mode, 8))
+        os.replace(temporary, target)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--managed-root", default="/srv/vps-deployer")
@@ -129,6 +153,9 @@ def main() -> None:
         raise ValueError("interactive access is disabled")
     request = json.loads(base64.urlsafe_b64decode(match.group(1)))
     argv = build_argv(request, policy.managed_root, storage)
+    if argv[0] == "__write_file__":
+        write_file(argv)
+        return
     executable = shutil.which(argv[0])
     if not executable:
         raise ValueError("executable unavailable")

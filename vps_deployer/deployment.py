@@ -188,10 +188,8 @@ class Reconciler:
         return Path(result.stdout.strip()).name if result.returncode == 0 else None
 
     def _write_privileged(self, path: str, content: str, mode: str, owner: str) -> None:
-        temp = f"/tmp/vps-deployer-{self.dep.name}-{hashlib.sha256(path.encode()).hexdigest()[:8]}"
-        self.remote.run(["tee", temp], input_data=content.encode())
-        self.remote.run(["install", "-o", owner.split(":")[0], "-g", owner.split(":")[1], "-m", mode, temp, path], sudo=True)
-        self.remote.run(["rm", "-f", temp])
+        user, group = owner.split(":")
+        self.remote.write_file(path, content.encode(), mode, user, group)
 
     def apply(self) -> list[Action]:
         if self.dep.privileged:

@@ -22,3 +22,14 @@ def test_privileged_host_uses_direct_root_transport():
     payload = argv[7].split()[1]
     assert json.loads(base64.urlsafe_b64decode(payload)) == {
         "operation": "service-control", "arguments": ["daemon-reload"]}
+
+
+def test_privileged_write_uses_stdin_capability(monkeypatch):
+    host = Host.parse({"name": "prod", "ssh": {"host": "alias", "user": "deploy",
+                                                       "privileged_host": "server", "privileged_user": "root"}}, "test")
+    captured = {}
+    remote = RemoteHost(host)
+    monkeypatch.setattr(remote, "run", lambda argv, **kwargs: captured.update(argv=argv, kwargs=kwargs))
+    remote.write_file("/etc/vps-deployer/demo.env", b"SECRET=value\n", "0640", "root", "svc-demo")
+    assert captured["argv"] == ["write-file", "/etc/vps-deployer/demo.env", "root", "svc-demo", "0640"]
+    assert captured["kwargs"]["input_data"] == b"SECRET=value\n"
