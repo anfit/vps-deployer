@@ -11,6 +11,17 @@ from vps_deployer.systemd import render_timer, render_unit, timer_name
 from vps_deployer.nginx import render_proxy
 
 
+class RecordingRemote:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, argv, **kwargs):
+        self.calls.append((argv, kwargs))
+
+    def write_file(self, path, content, mode, owner, group):
+        self.calls.append((["write_file", path, content, mode, owner, group], {}))
+
+
 def deployment(tmp_path: Path) -> Deployment:
     artifact = tmp_path / "artifact"
     artifact.mkdir(); (artifact / "app").write_text("hello")
@@ -287,6 +298,34 @@ def test_release_pruning_keeps_active_and_immediate_predecessor():
 
 def test_release_pruning_ignores_unsafe_directory_names():
     assert releases_to_prune(["new", "previous", "../state", "bad/name"], "new", "previous") == []
+
+
+def test_failed_activation_restores_release_and_configuration(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "new")
+    with pytest.raises(RuntimeError, match="release and configuration restored"):
+        reconciler._fail_activation("old", "OLD_ENV\n", "OLD_UNIT\n", None)
+    commands = [call[0] for call in remote.calls]
+    assert ["ln", "-sfn", "releases/old", f"{reconciler.base}/current"] in commands
+    assert ["write_file", reconciler.env_path, b"OLD_ENV\n", "0640", "root", dep.user] in commands
+    assert ["write_file", reconciler.unit_path, b"OLD_UNIT\n", "0644", "root", "root"] in commands
+    assert commands[-1] == ["systemctl", "restart", reconciler.supervisor_name]
+
+
+def test_failed_first_activation_stops_service_and_removes_new_configuration(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "new")
+    with pytest.raises(RuntimeError, match="first deployment stopped"):
+        reconciler._fail_activation(None, None, None, None)
+    commands = [call[0] for call in remote.calls]
+    assert commands[0] == ["systemctl", "disable", "--now", reconciler.supervisor_name]
+    assert ["rm", "-f", reconciler.env_path] in commands
+    assert ["rm", "-f", reconciler.unit_path] in commands
+    assert commands[-1] == ["systemctl", "daemon-reload"]
 
 
 @pytest.mark.parametrize(("name", "kind"), [

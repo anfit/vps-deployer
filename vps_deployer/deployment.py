@@ -191,6 +191,33 @@ class Reconciler:
         user, group = owner.split(":")
         self.remote.write_file(path, content.encode(), mode, user, group)
 
+    def _restore_configuration(self, environment: str | None, unit: str | None,
+                               timer: str | None) -> None:
+        files = (
+            (self.env_path, environment, "0640", f"root:{self.dep.user}"),
+            (self.unit_path, unit, "0644", "root:root"),
+            (self.timer_path, timer, "0644", "root:root"),
+        )
+        for path, content, mode, owner in files:
+            if path is None:
+                continue
+            if content is None:
+                self.remote.run(["rm", "-f", path], sudo=True)
+            else:
+                self._write_privileged(path, content, mode, owner)
+        self.remote.run(["systemctl", "daemon-reload"], sudo=True)
+
+    def _fail_activation(self, previous: str | None, environment: str | None,
+                         unit: str | None, timer: str | None) -> None:
+        if previous:
+            self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/current"], sudo=True)
+            self._restore_configuration(environment, unit, timer)
+            self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
+            raise RuntimeError("health check failed; previous release and configuration restored")
+        self.remote.run(["systemctl", "disable", "--now", self.supervisor_name], sudo=True, check=False)
+        self._restore_configuration(environment, unit, timer)
+        raise RuntimeError("health check failed; first deployment stopped")
+
     def apply(self) -> list[Action]:
         if self.dep.privileged:
             raise ConfigError("privileged deployment requires explicit allow_privileged=True")
@@ -229,14 +256,14 @@ class Reconciler:
         if previous != self.release:
             self.remote.run(["ln", "-sfn", f"releases/{self.release}", f"{self.base}/current"], sudo=True)
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
-            if not self._healthy() and previous:
-                self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/current"], sudo=True)
-                self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
-                raise RuntimeError("health check failed; previous release restored")
+            if not self._healthy():
+                self._fail_activation(previous, old_env, old_unit, old_timer)
         elif old_env != new_env or units_changed:
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
             if not self._healthy():
-                raise RuntimeError("health check failed after configuration restart")
+                self._restore_configuration(old_env, old_unit, old_timer)
+                self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
+                raise RuntimeError("health check failed; previous configuration restored")
         if self.dep.http_proxy:
             proxy_changed = self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep)
             if proxy_changed:

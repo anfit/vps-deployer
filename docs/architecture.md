@@ -64,8 +64,9 @@ A running service with a missing or stale manifest is reported unhealthy.
 
 An apply uploads a new release only when its release ID is absent. It writes the
 environment and unit, activates the new symlink, restarts the service, and runs
-the health check. If activation fails and a previous release exists, `current`
-is restored and the previous service is restarted. After a successful activation,
+the health check. If activation fails, the former environment, service and timer
+units are restored along with `current` before the previous service is restarted.
+An unhealthy first deployment is stopped and reported as failed. After a successful activation,
 the former active release is recorded explicitly by the `previous` symlink. After the complete deployment
 succeeds, older releases are deleted; only the active release and its immediate
 predecessor remain. Cleanup never runs after a failed activation.
