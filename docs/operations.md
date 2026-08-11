@@ -62,8 +62,9 @@ If Windows cannot render a journal character, inspect directly with SSH and
 & $deployer --repo $infra rollback example-prod --release RELEASE_ID
 ```
 
-Rollback selects an existing retained release, switches `current`, and restarts
-the service. It does not change the local desired state, so a subsequent plan
+Rollback selects the release recorded by `previous` (or an explicitly requested
+retained release), switches `current`, updates `previous`, and restarts the service.
+It does not change the local desired state, so a subsequent plan
 will propose reactivating the current desired release. Successful deployments
 retain one rollback target: the release that was active immediately beforehand.
 All older release directories are pruned after health and proxy checks succeed.

@@ -162,6 +162,10 @@ class Reconciler:
         result = self.remote.run(["readlink", f"{self.base}/current"], sudo=True, check=False)
         return Path(result.stdout.strip()).name if result.returncode == 0 else None
 
+    def previous_release(self) -> str | None:
+        result = self.remote.run(["readlink", f"{self.base}/previous"], sudo=True, check=False)
+        return Path(result.stdout.strip()).name if result.returncode == 0 else None
+
     def _write_privileged(self, path: str, content: str, mode: str, owner: str) -> None:
         temp = f"/tmp/vps-deployer-{self.dep.name}-{hashlib.sha256(path.encode()).hexdigest()[:8]}"
         self.remote.run(["tee", temp], input_data=content.encode())
@@ -221,6 +225,7 @@ class Reconciler:
         # Prune only after the whole activation (including proxy reconciliation)
         # succeeded. The prior active release is retained as the rollback target.
         if previous and previous != self.release:
+            self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/previous"], sudo=True)
             self._prune_releases(previous)
         return actions
 
@@ -305,16 +310,12 @@ class Reconciler:
         return actions
 
 
-def select_rollback(releases: list[str], current: str, requested: str | None = None) -> str:
-    available = sorted(set(releases), reverse=True)
-    if requested:
-        if requested not in available or requested == current:
-            raise ConfigError("requested rollback release is unavailable or already active")
-        return requested
-    try:
-        idx = available.index(current)
-    except ValueError as exc:
-        raise ConfigError("active release is not in the release list") from exc
-    if idx + 1 >= len(available):
+def select_rollback(releases: list[str], current: str, previous: str | None,
+                    requested: str | None = None) -> str:
+    available = set(releases)
+    target = requested or previous
+    if target is None:
         raise ConfigError("no previous release available")
-    return available[idx + 1]
+    if target not in available or target == current:
+        raise ConfigError("requested rollback release is unavailable or already active")
+    return target

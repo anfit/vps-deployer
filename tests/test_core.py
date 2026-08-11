@@ -218,9 +218,10 @@ def test_git_build_metadata_records_exact_revision(tmp_path):
 
 
 def test_rollback_selection():
-    assert select_rollback(["003", "001", "002"], "003") == "002"
-    assert select_rollback(["003", "001", "002"], "003", "001") == "001"
-    with pytest.raises(ConfigError): select_rollback(["001"], "001")
+    assert select_rollback(["f913abc", "28a01fe"], "28a01fe", "f913abc") == "f913abc"
+    assert select_rollback(["003", "001", "002"], "003", "002", "001") == "001"
+    with pytest.raises(ConfigError): select_rollback(["001"], "001", None)
+    with pytest.raises(ConfigError): select_rollback(["001"], "001", "missing")
 
 
 def test_release_pruning_keeps_active_and_immediate_predecessor():

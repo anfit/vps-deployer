@@ -27,6 +27,7 @@ For deployment `example-prod` under the default managed root:
 /srv/vps-deployer/example-prod/
   releases/<release-id>/
   current -> releases/<release-id>
+  previous -> releases/<release-id>
 /etc/vps-deployer/example-prod.env
 /etc/systemd/system/vps-deployer-example-prod.service
 /etc/nginx/sites-available/<proxy-name>      # when http_proxy is declared
@@ -62,8 +63,9 @@ A running service with a missing or stale manifest is reported unhealthy.
 
 An apply uploads a new release only when its release ID is absent. It writes the
 environment and unit, activates the new symlink, restarts the service, and runs
-the health check. If activation fails and a previous release exists, the symlink
-is restored and the previous service is restarted. After the complete deployment
+the health check. If activation fails and a previous release exists, `current`
+is restored and the previous service is restarted. After a successful activation,
+the former active release is recorded explicitly by the `previous` symlink. After the complete deployment
 succeeds, older releases are deleted; only the active release and its immediate
 predecessor remain. Cleanup never runs after a failed activation.
 
