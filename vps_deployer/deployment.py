@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from .config import Repository
 from .models import ConfigError, Deployment, Host
-from .remote import RemoteHost
+from .remote import RemoteError, RemoteHost
 from .systemd import render_timer, render_unit, timer_name, unit_name
 from .nginx import nginx_name, render_proxy
 
@@ -237,14 +237,19 @@ class Reconciler:
 
     def _fail_activation(self, previous: str | None, environment: str | None,
                          unit: str | None, timer: str | None) -> None:
+        message = self._rollback_activation(previous, environment, unit, timer)
+        raise RuntimeError(f"health check failed; {message}")
+
+    def _rollback_activation(self, previous: str | None, environment: str | None,
+                             unit: str | None, timer: str | None) -> str:
         if previous:
             self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/current"], sudo=True)
             self._restore_configuration(environment, unit, timer)
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
-            raise RuntimeError("health check failed; previous release and configuration restored")
+            return "previous release and configuration restored"
         self.remote.run(["systemctl", "disable", "--now", self.supervisor_name], sudo=True, check=False)
         self._restore_configuration(environment, unit, timer)
-        raise RuntimeError("health check failed; first deployment stopped")
+        return "first deployment stopped"
 
     def apply(self) -> list[Action]:
         if self.dep.privileged:
@@ -295,17 +300,18 @@ class Reconciler:
                 self._restore_configuration(old_env, old_unit, old_timer)
                 self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
                 raise RuntimeError("health check failed; previous configuration restored")
-        if self.dep.http_proxy:
-            proxy_changed = self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep)
-            if proxy_changed:
-                self._write_privileged(str(self.proxy_available), render_proxy(self.dep), "0644", "root:root")
-            if not self.remote.exists(str(self.proxy_enabled), sudo=True):
-                self.remote.run(["ln", "-s", str(self.proxy_available), str(self.proxy_enabled)], sudo=True)
-                proxy_changed = True
-            if proxy_changed:
-                self.remote.run(["nginx", "-t"], sudo=True)
-                self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
-        self._reconcile_obsolete_resources(old_resources)
+        try:
+            if self.dep.http_proxy:
+                self._reconcile_proxy()
+            self._reconcile_obsolete_resources(old_resources)
+        except (RemoteError, RuntimeError) as exc:
+            if previous != self.release:
+                outcome = self._rollback_activation(previous, old_env, old_unit, old_timer)
+                raise RuntimeError(f"proxy reconciliation failed; {outcome}") from exc
+            if old_env != new_env or units_changed:
+                self._restore_configuration(old_env, old_unit, old_timer)
+                self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
+            raise RuntimeError("proxy reconciliation failed; previous configuration restored") from exc
         desired_state = json.dumps(self.desired_resources, sort_keys=True, separators=(",", ":")) + "\n"
         if self.remote.read(self.state_path, sudo=True) != desired_state:
             self._write_privileged(self.state_path, desired_state, "0644", "root:root")
@@ -315,6 +321,30 @@ class Reconciler:
             self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/previous"], sudo=True)
             self._prune_releases(previous)
         return actions
+
+    def _reconcile_proxy(self) -> None:
+        desired = render_proxy(self.dep)
+        enabled_exists = self.remote.exists(str(self.proxy_enabled), sudo=True)
+        if self.remote.read(str(self.proxy_available), sudo=True) == desired and enabled_exists:
+            return
+        candidate_name = f"vps-candidate-{hashlib.sha256(self.dep.name.encode()).hexdigest()[:16]}"
+        candidate = f"/etc/nginx/sites-available/{candidate_name}"
+        with self.remote.deployment_lock("nginx"):
+            self._write_privileged(candidate, desired, "0644", "root:root")
+            try:
+                self.remote.run(["ln", "-sfn", candidate, str(self.proxy_enabled)], sudo=True)
+                self.remote.run(["nginx", "-t"], sudo=True)
+                self._write_privileged(str(self.proxy_available), desired, "0644", "root:root")
+                self.remote.run(["ln", "-sfn", str(self.proxy_available), str(self.proxy_enabled)], sudo=True)
+                self.remote.run(["rm", "-f", candidate], sudo=True)
+                self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
+            except (RemoteError, RuntimeError):
+                if enabled_exists:
+                    self.remote.run(["ln", "-sfn", str(self.proxy_available), str(self.proxy_enabled)], sudo=True)
+                else:
+                    self.remote.run(["rm", "-f", str(self.proxy_enabled)], sudo=True)
+                self.remote.run(["rm", "-f", candidate], sudo=True)
+                raise
 
     def _reconcile_obsolete_resources(self, previous: dict[str, object]) -> None:
         if previous.get("timer") and not self.dep.timer:
@@ -326,10 +356,19 @@ class Reconciler:
         old_proxy = previous.get("proxy")
         desired_proxy = nginx_name(self.dep) if self.dep.http_proxy else None
         if isinstance(old_proxy, str) and old_proxy != desired_proxy:
-            available = f"/etc/nginx/sites-available/{old_proxy}"
-            enabled = f"/etc/nginx/sites-enabled/{old_proxy}"
-            self.remote.run(["rm", "-f", enabled, available], sudo=True)
-            self.remote.run(["nginx", "-t"], sudo=True)
+            self._remove_proxy(old_proxy)
+
+    def _remove_proxy(self, proxy: str) -> None:
+        available = f"/etc/nginx/sites-available/{proxy}"
+        enabled = f"/etc/nginx/sites-enabled/{proxy}"
+        with self.remote.deployment_lock("nginx"):
+            self.remote.run(["rm", "-f", enabled], sudo=True)
+            try:
+                self.remote.run(["nginx", "-t"], sudo=True)
+            except RemoteError:
+                self.remote.run(["ln", "-sfn", available, enabled], sudo=True)
+                raise
+            self.remote.run(["rm", "-f", available], sudo=True)
             self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
 
     def _prune_releases(self, previous: str) -> None:
@@ -420,11 +459,8 @@ class Reconciler:
             self.remote.run(["rm", "-f", self.env_path], sudo=True)
         proxy = managed.get("proxy") or (nginx_name(self.dep) if self.dep.http_proxy else None)
         if isinstance(proxy, str):
-            available, enabled = f"/etc/nginx/sites-available/{proxy}", f"/etc/nginx/sites-enabled/{proxy}"
             actions.append(Action("REMOVE", f"HTTP proxy {proxy}"))
-            self.remote.run(["rm", "-f", enabled, available], sudo=True)
-            self.remote.run(["nginx", "-t"], sudo=True)
-            self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
+            self._remove_proxy(proxy)
         if self.remote.exists(self.state_path, sudo=True):
             self.remote.run(["rm", "-f", self.state_path], sudo=True)
         # The active and rollback releases, writable storage, and service users are retained.

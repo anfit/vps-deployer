@@ -25,6 +25,14 @@ class RecordingRemote:
     def read(self, path, sudo=False):
         return self.files.get(path)
 
+    def exists(self, path, sudo=False):
+        return path in self.files
+
+    def deployment_lock(self, deployment):
+        from contextlib import nullcontext
+        self.calls.append((["lock", deployment], {}))
+        return nullcontext()
+
 
 def deployment(tmp_path: Path) -> Deployment:
     artifact = tmp_path / "artifact"
@@ -385,8 +393,8 @@ def test_obsolete_timer_and_proxy_are_reconciled_from_persisted_state(tmp_path):
     commands = [call[0] for call in remote.calls]
     assert ["systemctl", "disable", "--now", "vps-deployer-demo-prod.timer"] in commands
     assert ["rm", "-f", reconciler.timer_path] in commands
-    assert ["rm", "-f", "/etc/nginx/sites-enabled/old-proxy",
-            "/etc/nginx/sites-available/old-proxy"] in commands
+    assert ["rm", "-f", "/etc/nginx/sites-enabled/old-proxy"] in commands
+    assert ["rm", "-f", "/etc/nginx/sites-available/old-proxy"] in commands
 
 
 def test_managed_resource_metadata_is_strictly_parsed(tmp_path):
@@ -399,6 +407,33 @@ def test_managed_resource_metadata_is_strictly_parsed(tmp_path):
     remote.files[reconciler.state_path] = '{"timer":"yes"}\n'
     with pytest.raises(ConfigError, match="managed resource metadata"):
         reconciler.managed_resources()
+
+
+def test_invalid_nginx_candidate_restores_previous_enabled_site(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    from vps_deployer.remote import RemoteError
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"},
+                            "http_proxy": {"name": "demo", "domain": "demo.test",
+                                           "upstream": "http://127.0.0.1:5100", "tls": False}},
+                           tmp_path / "d.yaml")
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    class InvalidNginxRemote(RecordingRemote):
+        def run(self, argv, **kwargs):
+            super().run(argv, **kwargs)
+            if argv == ["nginx", "-t"]:
+                raise RemoteError("invalid candidate")
+    remote = InvalidNginxRemote()
+    reconciler = Reconciler(repo, dep, remote, "same")
+    remote.files[str(reconciler.proxy_enabled)] = "symlink"
+    remote.files[str(reconciler.proxy_available)] = "OLD\n"
+    with pytest.raises(RemoteError):
+        reconciler._reconcile_proxy()
+    commands = [call[0] for call in remote.calls]
+    assert ["ln", "-sfn", str(reconciler.proxy_available), str(reconciler.proxy_enabled)] in commands
+    candidate = f"/etc/nginx/sites-available/vps-candidate-{__import__('hashlib').sha256(dep.name.encode()).hexdigest()[:16]}"
+    assert ["rm", "-f", candidate] in commands
 
 
 @pytest.mark.parametrize(("name", "kind"), [

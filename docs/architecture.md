@@ -77,8 +77,10 @@ Apply holds a non-blocking host lock at
 transaction. Concurrent applies for the same deployment fail without mutating
 state; independent deployments remain parallelizable.
 
-Nginx configuration is validated before reload. Each deployment reconciles only
-its declared proxy file, allowing several environments to share one VPS safely.
+Nginx changes are serialized under a host-wide deployer lock. A candidate site is
+temporarily enabled and validated before it atomically replaces the managed site;
+failed validation restores the former enabled site and triggers application
+rollback. Each deployment reconciles only its owned proxy file.
 
 Scheduled deployments add a systemd `.timer` beside a sandboxed oneshot service.
 The timer, rather than the short-lived service, is enabled and used for health
