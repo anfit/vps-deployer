@@ -132,8 +132,11 @@ and resolve inside the release. The executable is
 made runnable during installation. `working_directory` is release-relative.
 `restart` accepts `always`, `on-failure`, or `no`.
 
-Applications should create or update virtual environments in declared storage,
-not inside the immutable release.
+Applications should keep runtime dependencies rollback-safe. Prefer dependencies
+inside a prepared artifact, a content-addressed environment, or an environment
+associated with the release. If persistent storage holds a runtime environment,
+key it by dependency content rather than mutating one environment shared by all
+releases.
 
 ### Environment and secrets
 

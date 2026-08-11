@@ -5,6 +5,17 @@ repository with Linux hosts reachable through OpenSSH. Application repositories
 contain code; the infrastructure repository contains deployment identity,
 runtime configuration, routing, storage, and secret references.
 
+## Scope boundary
+
+The unit of coordination is one deployment transaction on one host. Independent
+deployments may run concurrently, but there is no fleet rollout, canary, quorum,
+or cross-host rollback model.
+
+The project deploys applications; it does not configure Linux machines. Package
+installation, firewalls, generic templates or hooks, databases, DNS, certificate
+issuance, kernel configuration, SSH configuration, and cloud APIs are explicit
+non-goals. Host assumptions may be inspected and rejected, but never remediated.
+
 ## Ownership boundaries
 
 - The application repository owns executable code and the `.deployer/` integration contract.
@@ -38,6 +49,12 @@ For deployment `example-prod` under the default managed root:
 Writable application state belongs outside releases, normally below `/var/lib`.
 Releases are immutable and owned by root with read/execute access for the service
 user. `remove` intentionally retains releases, storage, and service users.
+
+Runtime dependencies should preserve the same rollback boundary as application
+code. Prefer a complete prepared artifact, a dependency environment keyed by its
+content hash, or a release-associated environment. A single mutable virtualenv
+shared by unrelated releases can make rollback restore old code against new
+dependencies and should be avoided.
 
 ## Release identity and manifest
 
@@ -121,3 +138,32 @@ before writing atomically. Thus the restricted key cannot turn a unit write plus
 `systemctl restart` into arbitrary root execution. Deployments intentionally
 running as root are outside this restricted-key threat model and require a
 separately trusted privilege path.
+
+## Trust model
+
+The local operator and application source are trusted to choose code executed as
+the declared non-root service identity. Secret environment values are trusted
+inputs and are written only to the deployment's root-owned environment file.
+
+The ordinary SSH account is trusted to upload the exact artifact selected by the
+operator. Archives are validated locally and restricted again during privileged
+extraction, but the upload currently crosses that account's `/tmp`; compromise of
+the ordinary account can replace deployable code and is therefore equivalent to
+compromise of the application release, though not intended to grant root access.
+
+The optional privileged key has a narrower boundary: it must not provide an
+interactive shell or arbitrary root execution. Its forced-command gate is a
+security-sensitive protocol and is intentionally kept to deployment-specific
+capabilities. New features that cannot fit that model should be rejected rather
+than generalized. Lexical path validation is supplemented by root ownership,
+atomic writes, link/type restrictions, and archive rejection; symlink and race
+behavior remains a primary adversarial testing target.
+
+## Testing priorities
+
+Unit tests protect schema, rendering, transaction decisions, and gate policy.
+The next maturity layer is disposable-host end-to-end and fault-injection testing:
+failed releases and nginx reloads, service/timer transitions, interrupted SSH,
+process termination around activation, disk exhaustion, reboot recovery,
+malicious archives and symlinks, and concurrent deployments. These tests are more
+valuable than broadening the manifest into additional host-management features.

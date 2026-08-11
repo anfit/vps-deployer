@@ -1,6 +1,36 @@
 # vps-deployer
 
-Manage isolated systemd deployments on existing Linux hosts over OpenSSH.
+Deploy ordinary Linux services to a host with the operational properties of a
+small PaaS, without Docker or a resident agent.
+
+`vps-deployer` packages a release locally, transfers it over OpenSSH, installs it
+immutably, manages a hardened systemd service or timer, checks health, optionally
+reconciles an nginx route, and rolls back failed activation. It targets operators
+running roughly one to a dozen independent services on a normal Linux host.
+
+It is deliberately:
+
+- not configuration management;
+- not a container runtime;
+- not a build system;
+- not a multi-host rollout orchestrator.
+
+Applications arrive as prepared artifacts with an executable `.deployer/run`.
+Host packages, firewalls, TLS issuance, databases, DNS, kernel settings, and
+unrelated users remain owned by host administration. The core product boundary
+is a single-host deployment transaction.
+
+## When it fits
+
+Use it for self-contained HTTP services, workers, bots, webhooks, and scheduled
+jobs that naturally run under systemd. Go/Rust binaries, packaged Java runtimes,
+prepared Node/Python artifacts, and small native daemons fit especially well.
+
+Prefer another tool for container-image-first software, multi-service products,
+host provisioning, or coordinated fleet rollouts. Compared with Docker Compose,
+the application runtime stays Linux-native while the deployment lifecycle is
+managed. Compared with Ansible, vps-deployer owns application releases rather
+than general machine state.
 
 Detailed documentation:
 
@@ -43,6 +73,11 @@ use `secrets.from_env` only for secret material.
 Multiple deployments may target the same host. An optional `http_proxy` block
 manages a deployment's nginx site, TLS certificate references, loopback upstream,
 configuration validation, and reload independently from other routes on that host.
+
+The application repository owns `.deployer/` and application provenance. The
+infrastructure repository owns deployment identity, runtime configuration,
+routing, storage, and secret references. Secret values remain in the operator
+environment; persistent application data remains on the host.
 
 Local artifact and include paths support explicit `${NAME}` environment roots.
 Unresolved variables and `..` traversal are rejected. For example:
