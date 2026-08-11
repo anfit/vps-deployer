@@ -91,6 +91,39 @@ for explicit operator recovery rather than deleted under a running service.
 
 ## Apply and rollback
 
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Client as vps-deployer
+    participant Host as Linux host
+    participant Service as systemd service/timer
+    participant Proxy as nginx (optional)
+
+    Operator->>Client: plan or apply
+    Client->>Host: Check expectations
+    alt Any expectation fails
+        Host-->>Client: Failure details
+        Client-->>Operator: Stop before mutation
+    else Expectations pass
+        Client->>Host: Hold deployment lock
+        Client->>Host: Install and mark complete release
+        Client->>Host: Write environment and units
+        Client->>Host: Activate release
+        Client->>Service: Restart and check health
+        alt Service is healthy
+            opt HTTP proxy declared
+                Client->>Proxy: Validate and reconcile route
+            end
+            Client->>Host: Record rollback target and prune older releases
+            Client-->>Operator: Deployment complete
+        else Activation or proxy check fails
+            Client->>Host: Restore release and configuration
+            Client->>Service: Restart previous supervisor
+            Client-->>Operator: Failure with rollback result
+        end
+    end
+```
+
 An apply uploads a new release only when its completion marker is absent. It writes the
 environment and unit, activates the new symlink, restarts the service, and runs
 the health check. If activation fails, the former environment, service and timer

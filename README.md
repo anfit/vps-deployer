@@ -20,6 +20,25 @@ Host packages, firewalls, TLS issuance, databases, DNS, kernel settings, and
 unrelated users remain owned by host administration. The core product boundary
 is a single-host deployment transaction.
 
+```mermaid
+flowchart LR
+    subgraph workstation["Operator workstation"]
+        app["Application repository<br/>code + .deployer contract"]
+        infra["Infrastructure repository<br/>hosts + deployment manifests"]
+        secrets["Operator environment<br/>secret values"]
+        deployer["vps-deployer"]
+        app --> deployer
+        infra --> deployer
+        secrets -->|"resolved locally; never printed"| deployer
+    end
+
+    deployer -->|"OpenSSH deployment transaction"| host["Existing Linux host"]
+    host --> releases["Immutable releases<br/>current + rollback target"]
+    host --> systemd["Hardened systemd<br/>service or timer"]
+    host --> nginx["Optional nginx route"]
+    host --> state["Persistent application data"]
+```
+
 ## When it fits
 
 Use it for self-contained HTTP services, workers, bots, webhooks, and scheduled
