@@ -78,4 +78,7 @@ Normal SSH access is used for inspection and unprivileged commands. Root-owned
 files and systemd operations use either the host account's scoped sudo access or
 a separate privileged SSH identity. A privileged identity should be restricted
 server-side with `tools/vps-deployer-ssh-gate`; it must not provide a general
-interactive root shell.
+interactive root shell. The client sends operation names rather than executable
+names. The gate constructs fixed commands for those capabilities and is installed
+with an explicit managed root and allowlisted storage paths, so the key cannot
+operate on unrelated state elsewhere under `/var/lib`.

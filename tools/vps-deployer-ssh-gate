@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Forced-command gate for vps-deployer's dedicated privileged SSH key."""
+"""Capability gate for vps-deployer's dedicated privileged SSH key."""
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -10,59 +11,118 @@ import re
 import shutil
 import sys
 
-SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:@%+=,/ -]+$")
+SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+SAFE_RELEASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SAFE_UNIT = re.compile(r"^vps-deployer-[a-z][a-z0-9-]{0,62}\.service$")
-ALLOWED_COMMANDS = {"cat", "chmod", "chown", "find", "install", "ln", "mkdir", "nginx", "readlink", "rm",
-                    "systemctl", "tar", "test", "useradd"}
-PATH_ROOTS = ("/srv/vps-deployer", "/etc/vps-deployer", "/etc/nginx/sites-available/",
-              "/etc/nginx/sites-enabled/", "/var/lib/", "/tmp/vps-deployer-")
 
 
-def allowed_path(value: str) -> bool:
-    path = PurePosixPath(value)
-    if not path.is_absolute() or ".." in path.parts:
+def _under(path: str, root: str) -> bool:
+    candidate, parent = PurePosixPath(path), PurePosixPath(root)
+    return candidate.is_absolute() and ".." not in candidate.parts and (candidate == parent or parent in candidate.parents)
+
+
+def _deployment_path(path: str, managed_root: str) -> bool:
+    if not _under(path, managed_root):
         return False
-    text = str(path)
-    return text.startswith(PATH_ROOTS) or (
-        text.startswith("/etc/systemd/system/vps-deployer-") and text.endswith(".service")
-    )
+    relative = PurePosixPath(path).relative_to(PurePosixPath(managed_root))
+    return not relative.parts or (SAFE_NAME.fullmatch(relative.parts[0]) is not None)
 
 
-def validate(argv: list[str]) -> None:
-    if not argv or argv[0] not in ALLOWED_COMMANDS or any(not isinstance(x, str) or "\x00" in x for x in argv):
-        raise ValueError("command is not allowed")
-    if argv[0] == "systemctl":
-        if argv[1:] in (["daemon-reload"], ["reset-failed"]):
-            return
-        if argv[1:] == ["reload", "nginx"]:
-            return
-        if len(argv) >= 3 and argv[1] in {"enable", "disable", "restart", "start", "stop", "status", "is-active"}:
-            units = [x for x in argv[2:] if not x.startswith("-")]
-            if units and all(SAFE_UNIT.fullmatch(x) for x in units):
-                return
-        raise ValueError("systemctl operation is not allowed")
-    if argv[0] == "nginx":
-        if argv[1:] == ["-t"]:
-            return
-        raise ValueError("nginx operation is not allowed")
-    if argv[0] == "useradd":
-        if len(argv) >= 2 and re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", argv[-1]) and argv[-1] != "root":
-            return
-        raise ValueError("user is not allowed")
-    path_args = [x for x in argv[1:] if x.startswith("/")]
-    if not path_args or not all(allowed_path(x) or x == "/usr/sbin/nologin" for x in path_args):
-        raise ValueError("path is outside vps-deployer ownership")
-    if any(not SAFE_TOKEN.fullmatch(x) for x in argv if not x.startswith("/")):
-        raise ValueError("argument contains unsafe characters")
+def _owned_file(path: str, managed_root: str, storage: set[str]) -> bool:
+    return (_deployment_path(path, managed_root) or path in storage or
+            re.fullmatch(r"/etc/vps-deployer/[a-z][a-z0-9-]{0,62}\.env", path) is not None or
+            re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.service", path) is not None or
+            re.fullmatch(r"/etc/nginx/sites-(available|enabled)/[a-z][a-z0-9-]{0,62}", path) is not None or
+            re.fullmatch(r"/tmp/vps-deployer-[A-Za-z0-9._-]+", path) is not None)
+
+
+def build_argv(request: dict[str, object], managed_root: str, storage: set[str]) -> list[str]:
+    operation = request.get("operation")
+    args = request.get("arguments")
+    if not isinstance(operation, str) or not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+        raise ValueError("invalid operation request")
+    if any("\x00" in x or "\n" in x or "\r" in x for x in args):
+        raise ValueError("invalid operation argument")
+
+    if operation == "read-file" and len(args) == 1 and _owned_file(args[0], managed_root, storage):
+        return ["cat", args[0]]
+    if operation == "path-exists" and len(args) == 2 and args[0] == "-e" and _owned_file(args[1], managed_root, storage):
+        return ["test", "-e", args[1]]
+    if operation == "read-link" and len(args) == 1 and _deployment_path(args[0], managed_root):
+        return ["readlink", args[0]]
+    if operation == "ensure-directories" and args and args[0] == "-p" and all(
+            _deployment_path(path, managed_root) or path == "/etc/vps-deployer" for path in args[1:]):
+        return ["mkdir", "-p", *args[1:]]
+    if operation == "create-user" and args[:4] == ["--system", "--no-create-home", "--shell", "/usr/sbin/nologin"] and len(args) == 5 and SAFE_USER.fullmatch(args[4]) and args[4] != "root":
+        return ["useradd", *args]
+    if operation == "install":
+        if len(args) >= 8 and args[:7] == ["-d", "-o", "root", "-g", "root", "-m", "0755"]:
+            paths = args[7:]
+            if paths and all(_deployment_path(path, managed_root) or path == "/etc/vps-deployer" for path in paths):
+                return ["install", *args]
+        if len(args) == 8 and args[:1] == ["-d"] and args[1:7:2] == ["-o", "-g", "-m"]:
+            owner, group, mode, path = args[2], args[4], args[6], args[7]
+            if SAFE_USER.fullmatch(owner) and group == owner and mode == "0750" and path in storage:
+                return ["install", *args]
+        if len(args) == 8 and args[0] == "-o" and args[2] == "-g" and args[4] == "-m":
+            owner, group, mode, source, target = args[1], args[3], args[5], args[6], args[7]
+            if (SAFE_USER.fullmatch(owner) and SAFE_USER.fullmatch(group) and
+                    mode in {"0640", "0644"} and _owned_file(source, managed_root, storage) and
+                    source.startswith("/tmp/vps-deployer-") and _owned_file(target, managed_root, storage)):
+                return ["install", *args]
+        raise ValueError("install operation is outside policy")
+    if operation == "service-control":
+        if args in (["daemon-reload"], ["reset-failed"], ["reload", "nginx"]):
+            return ["systemctl", *args]
+        actions = {"enable", "disable", "restart", "start", "stop", "status", "is-active"}
+        units = [value for value in args[1:] if not value.startswith("-")]
+        if args and args[0] in actions and units and all(SAFE_UNIT.fullmatch(unit) for unit in units):
+            return ["systemctl", *args]
+    if operation == "validate-nginx" and args == ["-t"]:
+        return ["nginx", "-t"]
+    if operation == "set-link" and len(args) == 3 and args[0] in {"-s", "-sfn"}:
+        source, target = args[1:]
+        if (_owned_file(target, managed_root, storage) and
+                (_owned_file(source, managed_root, storage) or re.fullmatch(r"releases/[A-Za-z0-9._-]+", source))):
+            return ["ln", *args]
+    if operation == "list-releases" and len(args) == 8 and _deployment_path(args[0], managed_root) and args[1:] == ["-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print"]:
+        return ["find", *args]
+    if operation == "extract-release" and len(args) == 4 and args[0] == "-xzf" and args[2] == "-C" and args[1].startswith("/tmp/vps-deployer-") and _deployment_path(args[3], managed_root):
+        return ["tar", "--no-same-owner", "--no-same-permissions", "-xzf", args[1], "-C", args[3]]
+    if operation == "remove-paths" and args and args[0] in {"-f", "-rf"} and all(_owned_file(path, managed_root, storage) for path in args[1:]):
+        if args[0] != "-rf" or all("/releases/" in path and _deployment_path(path, managed_root) for path in args[1:]):
+            return ["rm", *args]
+    if operation == "set-ownership" and len(args) == 3 and args[0] == "-R" and re.fullmatch(r"root:[a-z_][a-z0-9_-]{0,31}", args[1]) and _deployment_path(args[2], managed_root):
+        return ["chown", *args]
+    if operation == "set-mode" and len(args) in {2, 3}:
+        recursive = args[0] == "-R"
+        mode_index = 1 if recursive else 0
+        path_index = 2 if recursive else 1
+        allowed_mode = args[mode_index] == "u=rwX,g=rX,o=" if recursive else args[mode_index] == "0750"
+        if allowed_mode and _deployment_path(args[path_index], managed_root):
+            return ["chmod", *args]
+    if operation == "service-logs" and len(args) >= 4 and args[0] == "-u" and SAFE_UNIT.fullmatch(args[1]) and args[2] == "--no-pager":
+        return ["journalctl", *args]
+    raise ValueError("operation is not allowed")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--managed-root", default="/srv/vps-deployer")
+    parser.add_argument("--storage", action="append", default=[])
+    policy = parser.parse_args()
+    if not PurePosixPath(policy.managed_root).is_absolute() or ".." in PurePosixPath(policy.managed_root).parts:
+        raise ValueError("invalid managed root policy")
+    storage = set(policy.storage)
+    if any(not PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts for path in storage):
+        raise ValueError("invalid storage policy")
     original = os.environ.get("SSH_ORIGINAL_COMMAND", "")
-    match = re.fullmatch(r"vps-deployer-exec ([A-Za-z0-9_=-]+)", original)
+    match = re.fullmatch(r"vps-deployer-op ([A-Za-z0-9_=-]+)", original)
     if not match:
         raise ValueError("interactive access is disabled")
-    argv = json.loads(base64.urlsafe_b64decode(match.group(1)))
-    validate(argv)
+    request = json.loads(base64.urlsafe_b64decode(match.group(1)))
+    argv = build_argv(request, policy.managed_root, storage)
     executable = shutil.which(argv[0])
     if not executable:
         raise ValueError("executable unavailable")

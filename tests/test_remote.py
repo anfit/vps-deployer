@@ -18,6 +18,7 @@ def test_privileged_host_uses_direct_root_transport():
     argv = RemoteHost(host).ssh_argv(["systemctl", "daemon-reload"], sudo=True)
     assert argv[:4] == ["ssh", "-o", "BatchMode=yes", "-i"]
     assert argv[5:7] == ["--", "root@server"]
-    assert argv[7].startswith("vps-deployer-exec ")
+    assert argv[7].startswith("vps-deployer-op ")
     payload = argv[7].split()[1]
-    assert json.loads(base64.urlsafe_b64decode(payload)) == ["systemctl", "daemon-reload"]
+    assert json.loads(base64.urlsafe_b64decode(payload)) == {
+        "operation": "service-control", "arguments": ["daemon-reload"]}

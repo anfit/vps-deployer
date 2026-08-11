@@ -39,14 +39,29 @@ class RemoteHost:
         direct_root = sudo and self.host.ssh.privileged_host is not None
         remote = ([] if direct_root else (["sudo", "--"] if sudo else [])) + argv
         if direct_root:
-            payload = base64.urlsafe_b64encode(json.dumps(argv, separators=(",", ":")).encode()).decode()
-            command = f"vps-deployer-exec {payload}"
+            request = self._privileged_request(argv)
+            payload = base64.urlsafe_b64encode(json.dumps(request, separators=(",", ":")).encode()).decode()
+            command = f"vps-deployer-op {payload}"
         else:
             command = " ".join(shlex.quote(x) for x in remote)
         target = self.privileged_target if direct_root else self.target
         identity = (["-i", str(Path(self.host.ssh.privileged_identity_file).expanduser())]
                     if direct_root and self.host.ssh.privileged_identity_file else [])
         return ["ssh", "-o", "BatchMode=yes", *( ["-v"] if self.verbose else []), *identity, "--", target, command]
+
+    @staticmethod
+    def _privileged_request(argv: list[str]) -> dict[str, object]:
+        command = argv[0] if argv else ""
+        operation = {
+            "cat": "read-file", "test": "path-exists", "readlink": "read-link",
+            "mkdir": "ensure-directories", "install": "install", "useradd": "create-user",
+            "systemctl": "service-control", "nginx": "validate-nginx", "ln": "set-link",
+            "find": "list-releases", "rm": "remove-paths", "tar": "extract-release",
+            "chown": "set-ownership", "chmod": "set-mode", "journalctl": "service-logs",
+        }.get(command)
+        if not operation:
+            raise RemoteError(f"no privileged operation for command: {command}")
+        return {"operation": operation, "arguments": argv[1:]}
 
     def run(self, argv: list[str], *, sudo: bool = False, check: bool = True, input_data: bytes | None = None) -> Result:
         proc = subprocess.run(self.ssh_argv(argv, sudo), input=input_data, capture_output=True)

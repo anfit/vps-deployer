@@ -5,24 +5,46 @@ import pytest
 
 
 GATE = runpy.run_path(str(Path(__file__).parents[1] / "tools" / "vps-deployer-ssh-gate"))
-validate = GATE["validate"]
+build_argv = GATE["build_argv"]
+ROOT = "/srv/custom"
+STORAGE = {"/var/lib/demo"}
 
 
-@pytest.mark.parametrize("argv", [
-    ["install", "-o", "root", "-g", "root", "-m", "0644", "/tmp/vps-deployer-site", "/etc/nginx/sites-available/example"],
-    ["ln", "-s", "/etc/nginx/sites-available/example", "/etc/nginx/sites-enabled/example"],
-    ["nginx", "-t"],
-    ["systemctl", "reload", "nginx"],
+def request(operation, *arguments):
+    return {"operation": operation, "arguments": list(arguments)}
+
+
+@pytest.mark.parametrize("operation", [
+    request("extract-release", "-xzf", "/tmp/vps-deployer-demo-a.tar.gz", "-C", "/srv/custom/demo/releases/a"),
+    request("install", "-d", "-o", "svc-demo", "-g", "svc-demo", "-m", "0750", "/var/lib/demo"),
+    request("set-link", "-sfn", "releases/a", "/srv/custom/demo/current"),
+    request("service-control", "restart", "vps-deployer-demo.service"),
 ])
-def test_gate_allows_required_nginx_reconciliation(argv):
-    validate(argv)
+def test_gate_builds_fixed_commands_for_capabilities(operation):
+    argv = build_argv(operation, ROOT, STORAGE)
+    assert argv[0] in {"tar", "install", "ln", "systemctl"}
 
 
-@pytest.mark.parametrize("argv", [
-    ["install", "/tmp/vps-deployer-site", "/etc/nginx/nginx.conf"],
-    ["nginx", "-s", "stop"],
-    ["systemctl", "restart", "nginx"],
+def test_tar_capability_adds_defensive_flags():
+    argv = build_argv(request("extract-release", "-xzf", "/tmp/vps-deployer-demo-a.tar.gz",
+                              "-C", "/srv/custom/demo/releases/a"), ROOT, STORAGE)
+    assert argv == ["tar", "--no-same-owner", "--no-same-permissions", "-xzf",
+                    "/tmp/vps-deployer-demo-a.tar.gz", "-C", "/srv/custom/demo/releases/a"]
+
+
+@pytest.mark.parametrize("operation", [
+    request("extract-release", "--checkpoint-action=exec=sh", "/tmp/x", "-C", "/srv/custom/demo"),
+    request("install", "-d", "-o", "root", "-g", "root", "-m", "0750", "/var/lib/other"),
+    request("remove-paths", "-rf", "/var/lib/demo"),
+    request("service-control", "restart", "sshd.service"),
+    request("set-link", "-s", "/etc/shadow", "/srv/custom/demo/current"),
 ])
-def test_gate_rejects_broader_nginx_access(argv):
+def test_gate_rejects_shell_power_and_cross_service_paths(operation):
     with pytest.raises(ValueError):
-        validate(argv)
+        build_argv(operation, ROOT, STORAGE)
+
+
+def test_gate_honors_configured_managed_root():
+    operation = request("path-exists", "-e", "/srv/vps-deployer/demo/current")
+    with pytest.raises(ValueError):
+        build_argv(operation, ROOT, STORAGE)

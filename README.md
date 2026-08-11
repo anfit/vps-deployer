@@ -102,7 +102,16 @@ removal.
 Hosts may set `ssh.privileged_host`, `ssh.privileged_user`, and
 `ssh.privileged_identity_file` to route privileged operations through a separate
 SSH identity. Use `tools/vps-deployer-ssh-gate` as that key's server-side forced
-command so it cannot open an interactive root shell.
+command so it cannot open an interactive root shell. The forced command must
+declare the host's managed root and each storage path assigned to this key:
+
+```text
+command="/usr/local/sbin/vps-deployer-ssh-gate --managed-root /srv/vps-deployer --storage /var/lib/example" ssh-ed25519 AAAA...
+```
+
+The client sends named capability requests; the gate constructs fixed executable
+arguments and rejects storage outside this policy. Update the forced-command
+installation before using a client containing this protocol change.
 
 Secrets are accepted only through explicitly declared process-environment
 references and are never printed by planning or validation.

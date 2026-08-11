@@ -16,6 +16,12 @@ $deployer = Join-Path $env:VPS_DEPLOYER_DIR '.venv\Scripts\vps-deployer.exe'
 - Required deployment secrets in the current process environment. A new terminal
   is normally required after changing persistent Windows User variables.
 
+When a host uses `privileged_host`, its dedicated key must use the current
+`tools/vps-deployer-ssh-gate` as a forced command. Pass `--managed-root` and one
+`--storage PATH` for every storage path assigned to deployments using that key.
+The gate protocol is versioned by its `vps-deployer-op` command prefix; update
+the server-side script and authorized-key policy together with client changes.
+
 ## Validate and inspect
 
 ```powershell
