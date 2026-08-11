@@ -260,6 +260,7 @@ class Deployment:
     timer: Timer | None = None
     expectations: Expectations = Expectations()
     manifest_path: Path = Path()
+    executable: str | None = None
 
     @classmethod
     def parse(cls, data: dict[str, Any], path: Path) -> "Deployment":
@@ -290,6 +291,11 @@ class Deployment:
         restart = str(runtime.get("restart", "always"))
         if restart not in {"always", "on-failure", "no"}:
             raise ConfigError(f"{source_name}: invalid restart policy")
+        executable = data.get("executable")
+        if executable is not None:
+            executable = str(executable)
+            if not SAFE_COMMAND.fullmatch(executable):
+                raise ConfigError(f"{source_name}: invalid executable name")
         env = {str(k): ValueRef.parse(v, f"environment.{k}") for k, v in (data.get("environment") or {}).items()}
         secrets = {str(k): ValueRef.parse(v, f"secrets.{k}", True) for k, v in (data.get("secrets") or {}).items()}
         invalid_keys = [key for key in (*env, *secrets) if not SAFE_ENV_NAME.fullmatch(key)]
@@ -349,6 +355,8 @@ class Deployment:
             if health_type != "http" or not match or int(match.group(1)) > 65535:
                 raise ConfigError(f"{source_name}: healthcheck must be a loopback HTTP URL")
             healthcheck = {"type": health_type, "url": health_url}
+        if executable and (timer is not None or proxy is not None or healthcheck is not None):
+            raise ConfigError(f"{source_name}: command deployments cannot declare timer, healthcheck or http_proxy")
         src = local_path(str(_required(release, "source", source_name)), path.parent, f"{source_name}: release.source")
         includes: list[ReleaseInclude] = []
         for index, item in enumerate(release.get("include", []) or []):
@@ -365,4 +373,4 @@ class Deployment:
         expected = merge_expectations(application_expectations(src),
                                       parse_expectations(data.get("expect"), source_name), source_name)
         return cls(name, str(_required(data, "host", source_name)), user, privileged, src, tuple(includes), command, wd, restart,
-                   healthcheck, env, secrets, stores, proxy, timer, expected, path)
+                   healthcheck, env, secrets, stores, proxy, timer, expected, path, executable)

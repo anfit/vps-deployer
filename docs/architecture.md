@@ -208,3 +208,7 @@ failed releases and nginx reloads, service/timer transitions, interrupted SSH,
 process termination around activation, disk exhaustion, reboot recovery,
 malicious archives and symlinks, and concurrent deployments. These tests are more
 valuable than broadening the manifest into additional host-management features.
+
+Command deployments own one validated launcher in `/usr/local/bin` instead of a
+systemd unit. Gate validation confines its environment and executable targets to
+the same named deployment beneath the managed root.

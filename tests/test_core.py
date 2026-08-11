@@ -621,7 +621,7 @@ def test_managed_resource_metadata_is_strictly_parsed(tmp_path):
     repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
     remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "same")
     remote.files[reconciler.state_path] = '{"timer":true,"proxy":"demo"}\n'
-    assert reconciler.managed_resources() == {"timer": True, "proxy": "demo"}
+    assert reconciler.managed_resources() == {"timer": True, "proxy": "demo", "executable": None}
     remote.files[reconciler.state_path] = '{"timer":"yes"}\n'
     with pytest.raises(ConfigError, match="managed resource metadata"):
         reconciler.managed_resources()
@@ -741,3 +741,21 @@ def test_release_archive_accepts_regular_files_and_directories(tmp_path):
         directory = tarfile.TarInfo("bin"); directory.type = tarfile.DIRTYPE; output.addfile(directory)
         member = tarfile.TarInfo("bin/app"); member.size = 3; output.addfile(member, io.BytesIO(b"app"))
     validate_archive(archive)
+
+
+def test_command_deployment_has_no_supervisor(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    deployer = artifact / ".deployer"; deployer.mkdir()
+    (deployer / "run.sh").write_text("#!/bin/sh\n")
+    dep = Deployment.parse({
+        "name": "manager", "host": "prod", "service": {"user": "svc-manager"},
+        "release": {"source": str(artifact)}, "runtime": {"command": "./.deployer/run.sh"},
+        "executable": "example-manager",
+    }, tmp_path / "d.yaml")
+    assert dep.executable == "example-manager"
+    with pytest.raises(ConfigError, match="command deployments"):
+        Deployment.parse({
+            "name": "manager", "host": "prod", "service": {"user": "svc-manager"},
+            "release": {"source": str(artifact)}, "runtime": {"command": "./.deployer/run.sh"},
+            "executable": "example-manager", "timer": {"on_calendar": "daily"},
+        }, tmp_path / "bad.yaml")

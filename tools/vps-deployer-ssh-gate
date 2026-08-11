@@ -102,6 +102,8 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
 
     if operation == "read-file" and len(args) == 1 and _owned_file(args[0], managed_root, storage):
         return ["cat", args[0]]
+    if operation == "read-executable" and len(args) == 1 and re.fullmatch(r"/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+-]{0,63}", args[0]):
+        return ["cat", args[0]]
     if operation == "path-exists" and len(args) == 2 and args[0] == "-e" and _owned_file(args[1], managed_root, storage):
         return ["test", "-e", args[1]]
     if (operation == "expect-path" and len(args) == 2 and args[0] == "-e" and
@@ -131,6 +133,10 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
             return ["__write_file__", target, owner, group, mode]
     if operation == "write-unit" and len(args) == 1 and _unit_path(args[0]):
         return ["__write_unit__", args[0]]
+    if operation == "write-executable" and len(args) == 1 and re.fullmatch(r"/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+-]{0,63}", args[0]):
+        return ["__write_executable__", args[0]]
+    if operation == "remove-executable" and len(args) == 2 and args[0] == "-f" and re.fullmatch(r"/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+-]{0,63}", args[1]):
+        return ["rm", "-f", args[1]]
     if operation == "hold-lock" and len(args) == 1 and SAFE_NAME.fullmatch(args[0]):
         return ["__hold_lock__", args[0]]
     if operation == "service-control":
@@ -215,6 +221,24 @@ def write_unit(argv: list[str], managed_root: str, storage: set[str]) -> None:
     atomic_write(target, "root", "root", "0644", io.BytesIO(raw))
 
 
+def write_executable(argv: list[str], managed_root: str) -> None:
+    import io
+    _, target = argv
+    raw = sys.stdin.buffer.read(16 * 1024 + 1)
+    if len(raw) > 16 * 1024:
+        raise ValueError("managed executable is too large")
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("managed executable is not UTF-8") from exc
+    root = re.escape(managed_root)
+    pattern = (r"#!/bin/sh\nset -eu\nset -a\n\. /etc/vps-deployer/([a-z][a-z0-9-]{0,62})\.env\nset \+a\n"
+               + r'exec "' + root + r'/\1/current/[A-Za-z0-9._+/-]+" "\$@"\n')
+    if not re.fullmatch(pattern, content) or ".." in content:
+        raise ValueError("managed executable content is invalid")
+    atomic_write(target, "root", "root", "0755", io.BytesIO(raw))
+
+
 def hold_lock(deployment: str) -> None:
     import fcntl
     path = f"/run/lock/vps-deployer-{deployment}.lock"
@@ -253,6 +277,9 @@ def main() -> None:
         return
     if argv[0] == "__write_unit__":
         write_unit(argv, policy.managed_root, storage)
+        return
+    if argv[0] == "__write_executable__":
+        write_executable(argv, policy.managed_root)
         return
     if argv[0] == "__hold_lock__":
         hold_lock(argv[1])

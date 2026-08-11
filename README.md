@@ -8,6 +8,9 @@ immutably, manages a hardened systemd service or timer, checks health, optionall
 reconciles an nginx route, and rolls back failed activation. It targets operators
 running roughly one to a dozen independent services on a normal Linux host.
 
+It also supports command deployments: immutable releases exposed through a
+validated `/usr/local/bin` launcher without creating a daemon.
+
 It is deliberately:
 
 - not configuration management;

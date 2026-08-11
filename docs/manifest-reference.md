@@ -179,3 +179,20 @@ The proxy manages one nginx site with HTTP and HTTPS listeners. Upstreams must
 use `http://127.0.0.1:<port>`. Certificates must already exist on the host.
 TLS certificate and key paths are implicit host expectations. Certificate
 issuance and renewal remain host-level responsibilities.
+
+## Command deployments
+
+For a shell command installed on the normal administrative `PATH`, declare its
+executable name:
+
+```yaml
+executable: example-manager
+runtime:
+  command: ./.deployer/run.sh
+```
+
+This installs a validated root-owned launcher under `/usr/local/bin`. It loads
+the deployment environment file and executes the release-local command with the
+caller's arguments. No systemd unit or daemon is created. Command deployments
+cannot declare a timer, health check, or HTTP proxy; status verifies the active
+release, provenance, and exact launcher content.

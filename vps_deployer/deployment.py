@@ -243,6 +243,17 @@ class Reconciler:
         self.proxy_available = f"/etc/nginx/sites-available/{nginx_name(dep)}" if dep.http_proxy else None
         self.proxy_enabled = f"/etc/nginx/sites-enabled/{nginx_name(dep)}" if dep.http_proxy else None
 
+    @property
+    def executable_path(self) -> str | None:
+        return f"/usr/local/bin/{self.dep.executable}" if self.dep.executable else None
+
+    def executable_wrapper(self) -> str:
+        executable = shlex.split(self.dep.command)[0][2:]
+        if self.dep.working_directory != ".":
+            executable = f"{self.dep.working_directory}/{executable}"
+        return (f"#!/bin/sh\nset -eu\nset -a\n. {self.env_path}\nset +a\n"
+                f'exec "{self.base}/current/{executable}" "$@"\n')
+
     def plan(self, require_secrets: bool = False) -> list[Action]:
         require_expectations(self.dep, self.remote)
         values, secret_keys = self.repo.resolve_environment(self.dep, require_secrets)
@@ -253,7 +264,7 @@ class Reconciler:
             if not self.remote.exists(path, sudo=True):
                 actions.append(Action("CREATE", path))
         env_changed = not env_matches(self.remote.read(self.env_path, sudo=True), values, secret_keys, require_secrets)
-        unit_changed = self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root)
+        unit_changed = not self.dep.executable and self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root)
         timer_changed = bool(self.dep.timer and self.remote.read(self.timer_path, sudo=True) != render_timer(self.dep))
         managed = self.managed_resources()
         if env_changed:
@@ -262,6 +273,8 @@ class Reconciler:
             actions.append(Action("UPDATE", "systemd unit"))
         if timer_changed:
             actions.append(Action("UPDATE", "systemd timer"))
+        if self.dep.executable and self.remote.read(str(self.executable_path), sudo=True) != self.executable_wrapper():
+            actions.append(Action("UPDATE", f"executable {self.executable_path}"))
         if managed.get("timer") and not self.dep.timer:
             actions.append(Action("REMOVE", "obsolete systemd timer"))
         desired_proxy = nginx_name(self.dep) if self.dep.http_proxy else None
@@ -279,9 +292,10 @@ class Reconciler:
             actions.append(Action("INSTALL", f"release {self.release}"))
         active = self.active_release()
         if active != self.release:
-            actions.extend([Action("ACTIVATE", f"release {self.release}"),
-                            Action("RESTART", "timer" if self.dep.timer else "service")])
-        elif env_changed or unit_changed or timer_changed:
+            actions.append(Action("ACTIVATE", f"release {self.release}"))
+            if not self.dep.executable:
+                actions.append(Action("RESTART", "timer" if self.dep.timer else "service"))
+        elif not self.dep.executable and (env_changed or unit_changed or timer_changed):
             actions.append(Action("RESTART", "timer" if self.dep.timer else "service"))
         if managed != self.desired_resources:
             actions.append(Action("UPDATE", "managed resource metadata"))
@@ -290,20 +304,22 @@ class Reconciler:
     @property
     def desired_resources(self) -> dict[str, object]:
         return {"timer": bool(self.dep.timer),
-                "proxy": nginx_name(self.dep) if self.dep.http_proxy else None}
+                "proxy": nginx_name(self.dep) if self.dep.http_proxy else None,
+                "executable": self.dep.executable}
 
     def managed_resources(self) -> dict[str, object]:
         content = self.remote.read(self.state_path, sudo=True)
         if content is None:
-            return {"timer": False, "proxy": None}
+            return {"timer": False, "proxy": None, "executable": None}
         try:
             state = json.loads(content)
         except json.JSONDecodeError as exc:
             raise ConfigError(f"{self.dep.name}: invalid managed resource metadata") from exc
         if (not isinstance(state, dict) or not isinstance(state.get("timer"), bool) or
-                (state.get("proxy") is not None and not isinstance(state.get("proxy"), str))):
+                (state.get("proxy") is not None and not isinstance(state.get("proxy"), str)) or
+                (state.get("executable") is not None and not isinstance(state.get("executable"), str))):
             raise ConfigError(f"{self.dep.name}: invalid managed resource metadata")
-        return {"timer": state["timer"], "proxy": state.get("proxy")}
+        return {"timer": state["timer"], "proxy": state.get("proxy"), "executable": state.get("executable")}
 
     def active_release(self) -> str | None:
         result = self.remote.run(["readlink", f"{self.base}/current"], sudo=True, check=False)
@@ -375,6 +391,8 @@ class Reconciler:
             self.remote.run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", self.dep.user], sudo=True)
         for store in self.dep.storage:
             self.remote.run(["install", "-d", "-o", self.dep.user, "-g", self.dep.user, "-m", "0750", store.path], sudo=True)
+        if self.dep.executable:
+            return self._apply_executable(values, actions)
         complete = self.remote.exists(self.complete_path, sudo=True)
         if not complete and self._legacy_release_adoptable():
             self._write_privileged(self.complete_path, f"{self.release}\n", "0640", f"root:{self.dep.user}")
@@ -437,6 +455,22 @@ class Reconciler:
             self._write_privileged(self.state_path, desired_state, "0644", "root:root")
         # Prune only after the whole activation (including proxy reconciliation)
         # succeeded. The prior active release is retained as the rollback target.
+        if previous and previous != self.release:
+            self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/previous"], sudo=True)
+            self._prune_releases(previous)
+        return actions
+
+    def _apply_executable(self, values: dict[str, str], actions: list[Action]) -> list[Action]:
+        complete = self.remote.exists(self.complete_path, sudo=True)
+        if not complete:
+            self._install_release()
+        previous = self.active_release()
+        self._write_privileged(self.env_path, env_file(values), "0640", f"root:{self.dep.user}")
+        if previous != self.release:
+            self.remote.run(["ln", "-sfn", f"releases/{self.release}", f"{self.base}/current"], sudo=True)
+        self._write_privileged(str(self.executable_path), self.executable_wrapper(), "0755", "root:root")
+        desired_state = json.dumps(self.desired_resources, sort_keys=True, separators=(",", ":")) + "\n"
+        self._write_privileged(self.state_path, desired_state, "0644", "root:root")
         if previous and previous != self.release:
             self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/previous"], sudo=True)
             self._prune_releases(previous)
@@ -569,6 +603,8 @@ class Reconciler:
             return False
         if manifest.get("deployment.release") != self.release:
             return False
+        if self.dep.executable:
+            return self.remote.read(str(self.executable_path), sudo=True) == self.executable_wrapper()
         service = self.remote.run(["systemctl", "is-active", self.supervisor_name], sudo=True, check=False)
         return service.returncode == 0 and self._healthy()
 
@@ -589,6 +625,9 @@ class Reconciler:
         return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
 
     def _healthy(self) -> bool:
+        if self.dep.executable:
+            return (self.active_release() is not None and
+                    self.remote.read(str(self.executable_path), sudo=True) == self.executable_wrapper())
         hc = self.dep.healthcheck
         if self.dep.timer:
             active = self.remote.run(["systemctl", "is-active", "--quiet", timer_name(self.dep)],
@@ -609,6 +648,10 @@ class Reconciler:
             raise ConfigError("privileged deployment removal requires --allow-privileged")
         actions: list[Action] = []
         managed = self.managed_resources()
+        executable = managed.get("executable") or self.dep.executable
+        if isinstance(executable, str):
+            actions.append(Action("REMOVE", f"executable /usr/local/bin/{executable}"))
+            self.remote.run(["remove-executable", "-f", f"/usr/local/bin/{executable}"], sudo=True, check=False)
         if (managed.get("timer") or self.dep.timer) and self.remote.exists(self.timer_path, sudo=True):
             actions.append(Action("REMOVE", "systemd timer"))
             self.remote.run(["systemctl", "disable", "--now", timer_name(self.dep)], sudo=True, check=False)

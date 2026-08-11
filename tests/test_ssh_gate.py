@@ -48,6 +48,15 @@ def test_gate_rejects_shell_power_and_cross_service_paths(operation):
         build_argv(operation, ROOT, STORAGE)
 
 
+def test_gate_scopes_managed_path_executables():
+    assert build_argv(request("read-executable", "/usr/local/bin/booklace-manager"), ROOT, STORAGE) == [
+        "cat", "/usr/local/bin/booklace-manager"]
+    assert build_argv(request("write-executable", "/usr/local/bin/booklace-manager"), ROOT, STORAGE) == [
+        "__write_executable__", "/usr/local/bin/booklace-manager"]
+    with pytest.raises(ValueError):
+        build_argv(request("write-executable", "/usr/local/sbin/root-shell"), ROOT, STORAGE)
+
+
 def test_gate_honors_configured_managed_root():
     operation = request("path-exists", "-e", "/srv/vps-deployer/demo/current")
     with pytest.raises(ValueError):

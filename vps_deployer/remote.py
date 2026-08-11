@@ -54,6 +54,8 @@ class RemoteHost:
     @staticmethod
     def _privileged_request(argv: list[str]) -> dict[str, object]:
         command = argv[0] if argv else ""
+        if command == "cat" and len(argv) == 2 and re.fullmatch(r"/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+-]{0,63}", argv[1]):
+            return {"operation": "read-executable", "arguments": argv[1:]}
         operation = {
             "cat": "read-file", "test": "path-exists", "readlink": "read-link",
             "mkdir": "ensure-directories", "install": "install", "useradd": "create-user",
@@ -62,6 +64,8 @@ class RemoteHost:
             "chown": "set-ownership", "chmod": "set-mode", "journalctl": "service-logs",
             "write-file": "write-file",
             "write-unit": "write-unit",
+            "write-executable": "write-executable",
+            "remove-executable": "remove-executable",
             "expect-path": "expect-path",
             "hold-lock": "hold-lock",
         }.get(command)
@@ -71,6 +75,11 @@ class RemoteHost:
 
     def write_file(self, path: str, content: bytes, mode: str, owner: str, group: str) -> None:
         if self.host.ssh.privileged_host is not None:
+            if re.fullmatch(r"/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+-]{0,63}", path):
+                if (owner, group, mode) != ("root", "root", "0755"):
+                    raise RemoteError("managed executables require root:root mode 0755")
+                self.run(["write-executable", path], sudo=True, input_data=content)
+                return
             if re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.(service|timer)", path):
                 if (owner, group, mode) != ("root", "root", "0644"):
                     raise RemoteError("managed systemd units require root:root mode 0644")

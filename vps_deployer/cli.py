@@ -92,16 +92,18 @@ def run(args) -> int:
         print("\n".join(map(str, actions)) if actions else "No changes."); return 0
     unit = unit_name(dep); supervisor = timer_name(dep) if dep.timer else unit; rec = Reconciler(repo, dep, remote, "status")
     if args.command == "status":
-        active = rec.active_release(); service = remote.run(["systemctl", "is-active", supervisor], sudo=True, check=False)
+        active = rec.active_release()
+        service = (None if dep.executable else remote.run(["systemctl", "is-active", supervisor], sudo=True, check=False))
         desired = release_id(dep)
         manifest = rec.release_manifest() if active else {}
         metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
         desired_commit, _ = git_metadata(metadata_source, desired)
         manifest_ok = manifest.get("deployment.release") == desired and (not desired_commit or manifest.get("deployment.commit") == desired_commit)
-        healthy = service.returncode == 0 and rec._healthy() and manifest_ok
+        healthy = (dep.executable is not None or service.returncode == 0) and rec._healthy() and manifest_ok
         health = "healthy" if healthy else "unhealthy"
-        supervisor_label = "timer" if dep.timer else "service"
-        print(f"deployment: {dep.name}\nhost: {dep.host}\n{supervisor_label}: {service.stdout.strip() or 'unknown'}\n"
+        supervisor_label = "executable" if dep.executable else ("timer" if dep.timer else "service")
+        supervisor_status = f"/usr/local/bin/{dep.executable}" if dep.executable else (service.stdout.strip() or "unknown")
+        print(f"deployment: {dep.name}\nhost: {dep.host}\n{supervisor_label}: {supervisor_status}\n"
               f"desired release: {desired}\nactive release: {active or 'none'}\nhealth: {health}\nuser: {dep.user}")
         print(f"desired commit: {desired_commit or 'unversioned'}\nactive commit: {manifest.get('deployment.commit', 'missing')}\n"
               f"manifest: {'current' if manifest_ok else 'stale or missing'}")
@@ -110,9 +112,11 @@ def run(args) -> int:
             print(f"last job: {timer_status.get('ExecMainExitTimestamp') or 'never'}\n"
                   f"last result: {timer_status.get('Result', 'unknown')}\n"
                   f"last exit status: {timer_status.get('ExecMainStatus', 'unknown')}")
-        if service.returncode: print(remote.run(["systemctl", "status", supervisor, "--no-pager", "--lines=20"], sudo=True, check=False).stdout)
+        if service is not None and service.returncode: print(remote.run(["systemctl", "status", supervisor, "--no-pager", "--lines=20"], sudo=True, check=False).stdout)
         return 0 if healthy else 1
     if args.command == "logs":
+        if dep.executable:
+            raise ConfigError("command deployments do not have service logs")
         argv = ["journalctl", "-u", unit, "--no-pager", "-n", str(args.lines)]
         if args.since: argv += ["--since", args.since]
         if args.follow: argv += ["--follow"]
@@ -124,7 +128,8 @@ def run(args) -> int:
     remote.run(["ln", "-sfn", f"releases/{target}", f"{rec.base}/current"], sudo=True)
     if current:
         remote.run(["ln", "-sfn", f"releases/{current}", f"{rec.base}/previous"], sudo=True)
-    remote.run(["systemctl", "restart", supervisor], sudo=True)
+    if not dep.executable:
+        remote.run(["systemctl", "restart", supervisor], sudo=True)
     print(f"Rolled back {dep.name} to {target}"); return 0
 
 
