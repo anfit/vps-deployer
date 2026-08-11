@@ -166,7 +166,7 @@ class Deployment:
             raise ConfigError(f"{source_name}: invalid deployment name")
         service = _required(data, "service", source_name)
         release = _required(data, "release", source_name)
-        runtime = _required(data, "runtime", source_name)
+        runtime = data.get("runtime") or {}
         if not all(isinstance(x, dict) for x in (service, release, runtime)):
             raise ConfigError(f"{source_name}: service, release and runtime must be mappings")
         user = str(_required(service, "user", source_name))
@@ -175,7 +175,7 @@ class Deployment:
             raise ConfigError(f"{source_name}: service.privileged must be boolean")
         if not SAFE_USER.fullmatch(user) or (user == "root" and not privileged) or (privileged and user != "root"):
             raise ConfigError(f"{source_name}: invalid service user")
-        command = safe_text(str(_required(runtime, "command", source_name)).strip(),
+        command = safe_text(str(runtime.get("command", "./.deployer/run")).strip(),
                             f"{source_name}: runtime.command", systemd=True)
         if not command.startswith("./") or ".." in PurePosixPath(command.split()[0]).parts:
             raise ConfigError(f"{source_name}: runtime command must be relative to the release")

@@ -45,7 +45,7 @@ release:
       target: config/production.yaml
 
 runtime:
-  command: ./run-managed.sh
+  # command defaults to ./.deployer/run
   working_directory: .
   restart: always
 
@@ -118,14 +118,17 @@ Tarball sources are copied to a private local snapshot and inspected before uplo
 Only regular files and directories with release-relative paths are accepted;
 links, devices, traversal, and absolute member paths are rejected.
 
-Directory sources can provide `.vps-deployer-ignore`. Each non-comment line is a
+Directory sources can provide `.deployer/ignore`. Each non-comment line is a
 glob matched against repository-relative POSIX paths. Default exclusions include
 Git metadata, virtual environments, IDE state, caches, common secret extensions,
-and local test directories.
+and local test directories. The legacy root `.vps-deployer-ignore` is read only
+when `.deployer/ignore` is absent.
 
 ### Runtime
 
-`command` must begin with `./` and resolve inside the release. The executable is
+`command` defaults to `./.deployer/run`. An explicit command supports named
+application entrypoints such as `./.deployer/bootstrap`. It must begin with `./`
+and resolve inside the release. The executable is
 made runnable during installation. `working_directory` is release-relative.
 `restart` accepts `always`, `on-failure`, or `no`.
 

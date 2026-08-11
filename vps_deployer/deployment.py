@@ -118,7 +118,10 @@ def _ignored(root: Path, path: Path) -> bool:
     if any(part in ignored or "venv" in part.lower() or part.startswith(".test-") or
            part.endswith((".egg-info", ".key", ".secret")) for part in relative.parts):
         return True
-    ignore_file = root / ".vps-deployer-ignore"
+    ignore_file = root / ".deployer" / "ignore"
+    legacy_ignore = root / ".vps-deployer-ignore"
+    if not ignore_file.is_file() and legacy_ignore.is_file():
+        ignore_file = legacy_ignore
     if ignore_file.is_file() and path != ignore_file:
         patterns = (line.strip() for line in ignore_file.read_text(encoding="utf-8").splitlines())
         return any(pattern and not pattern.startswith("#") and

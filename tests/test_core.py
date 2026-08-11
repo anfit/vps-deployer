@@ -54,6 +54,12 @@ def test_validation_rejects_unsafe_command(tmp_path):
                           "release": {"source": "x"}, "runtime": {"command": "/bin/sh"}}, tmp_path / "d.yaml")
 
 
+def test_runtime_defaults_to_application_contract(tmp_path):
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": "x"}}, tmp_path / "d.yaml")
+    assert dep.command == "./.deployer/run"
+
+
 @pytest.mark.parametrize(("field", "value"), [
     ("working_directory", ".\nUser=root"),
     ("working_directory", "app%N"),
@@ -270,11 +276,20 @@ def test_content_hash_ignores_local_virtualenv(tmp_path):
 
 def test_content_hash_honors_repository_ignore_file(tmp_path):
     source = tmp_path / "a"; source.mkdir(); (source / "app.py").write_text("app")
-    (source / ".vps-deployer-ignore").write_text("local.properties\nhelpers/*\n")
+    contract = source / ".deployer"; contract.mkdir()
+    (contract / "ignore").write_text("local.properties\nhelpers/*\n")
     first = content_hash(source)
     assert len(first) == 16
     (source / "local.properties").write_text("secret")
     helpers = source / "helpers"; helpers.mkdir(); (helpers / "debug.py").write_text("local")
+    assert content_hash(source) == first
+
+
+def test_content_hash_supports_legacy_ignore_file(tmp_path):
+    source = tmp_path / "a"; source.mkdir(); (source / "app.py").write_text("app")
+    (source / ".vps-deployer-ignore").write_text("local.properties\n")
+    first = content_hash(source)
+    (source / "local.properties").write_text("secret")
     assert content_hash(source) == first
 
 

@@ -7,7 +7,7 @@ runtime configuration, routing, storage, and secret references.
 
 ## Ownership boundaries
 
-- The application repository owns executable code and its managed start script.
+- The application repository owns executable code and the `.deployer/` integration contract.
 - The infrastructure repository owns hosts and deployment manifests.
 - The operator environment owns secret values and local repository roots.
 - The remote host owns persistent runtime data, TLS keys, and the retained rollback release.
