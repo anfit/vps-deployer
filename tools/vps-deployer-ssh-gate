@@ -15,7 +15,7 @@ import unicodedata
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 SAFE_RELEASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-SAFE_UNIT = re.compile(r"^vps-deployer-[a-z][a-z0-9-]{0,62}\.service$")
+SAFE_UNIT = re.compile(r"^vps-deployer-[a-z][a-z0-9-]{0,62}\.(service|timer)$")
 
 
 def _under(path: str, root: str) -> bool:
@@ -33,7 +33,7 @@ def _deployment_path(path: str, managed_root: str) -> bool:
 def _owned_file(path: str, managed_root: str, storage: set[str]) -> bool:
     return (_deployment_path(path, managed_root) or path in storage or
             re.fullmatch(r"/etc/vps-deployer/[a-z][a-z0-9-]{0,62}\.env", path) is not None or
-            re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.service", path) is not None or
+            re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.(service|timer)", path) is not None or
             re.fullmatch(r"/etc/nginx/sites-(available|enabled)/[a-z][a-z0-9-]{0,62}", path) is not None or
             re.fullmatch(r"/tmp/vps-deployer-[A-Za-z0-9._-]+", path) is not None)
 

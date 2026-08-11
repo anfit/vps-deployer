@@ -8,7 +8,7 @@ from .config import Repository
 from .deployment import Reconciler, git_metadata, release_id, select_rollback
 from .models import ConfigError
 from .remote import RemoteError, RemoteHost
-from .systemd import unit_name
+from .systemd import timer_name, unit_name
 
 
 def parser() -> argparse.ArgumentParser:
@@ -81,9 +81,9 @@ def run(args) -> int:
             actions = reconciler.apply()
         print(f"Deployment: {dep.name}\nHost: {dep.host}\n")
         print("\n".join(map(str, actions)) if actions else "No changes."); return 0
-    unit = unit_name(dep); rec = Reconciler(repo, dep, remote, "status")
+    unit = unit_name(dep); supervisor = timer_name(dep) if dep.timer else unit; rec = Reconciler(repo, dep, remote, "status")
     if args.command == "status":
-        active = rec.active_release(); service = remote.run(["systemctl", "is-active", unit], sudo=True, check=False)
+        active = rec.active_release(); service = remote.run(["systemctl", "is-active", supervisor], sudo=True, check=False)
         desired = release_id(dep)
         manifest = rec.release_manifest() if active else {}
         metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
@@ -91,11 +91,12 @@ def run(args) -> int:
         manifest_ok = manifest.get("release.id") == desired and (not desired_commit or manifest.get("commit.hash") == desired_commit)
         healthy = service.returncode == 0 and rec._healthy() and manifest_ok
         health = "healthy" if healthy else "unhealthy"
-        print(f"deployment: {dep.name}\nhost: {dep.host}\nservice: {service.stdout.strip() or 'unknown'}\n"
+        supervisor_label = "timer" if dep.timer else "service"
+        print(f"deployment: {dep.name}\nhost: {dep.host}\n{supervisor_label}: {service.stdout.strip() or 'unknown'}\n"
               f"desired release: {desired}\nactive release: {active or 'none'}\nhealth: {health}\nuser: {dep.user}")
         print(f"desired commit: {desired_commit or 'unversioned'}\nactive commit: {manifest.get('commit.hash', 'missing')}\n"
               f"manifest: {'current' if manifest_ok else 'stale or missing'}")
-        if service.returncode: print(remote.run(["systemctl", "status", unit, "--no-pager", "--lines=20"], sudo=True, check=False).stdout)
+        if service.returncode: print(remote.run(["systemctl", "status", supervisor, "--no-pager", "--lines=20"], sudo=True, check=False).stdout)
         return 0 if healthy else 1
     if args.command == "logs":
         argv = ["journalctl", "-u", unit, "--no-pager", "-n", str(args.lines)]
@@ -109,7 +110,7 @@ def run(args) -> int:
     remote.run(["ln", "-sfn", f"releases/{target}", f"{rec.base}/current"], sudo=True)
     if current:
         remote.run(["ln", "-sfn", f"releases/{current}", f"{rec.base}/previous"], sudo=True)
-    remote.run(["systemctl", "restart", unit], sudo=True)
+    remote.run(["systemctl", "restart", supervisor], sudo=True)
     print(f"Rolled back {dep.name} to {target}"); return 0
 
 

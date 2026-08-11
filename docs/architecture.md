@@ -40,8 +40,9 @@ user. `remove` intentionally retains releases, storage, and service users.
 
 ## Release identity and manifest
 
-Release IDs are content-addressed. The hash covers deployable source files,
-release includes, and the Git commit when the source is versioned. Ignored local
+Release IDs are source-state-addressed. The hash covers deployable source files,
+release includes, and the Git commit when the source is versioned, so identical
+deployable bytes from different commits intentionally produce different IDs. Ignored local
 files and `.git` do not enter the archive.
 
 Every installed release receives `build.properties`:
@@ -71,6 +72,10 @@ predecessor remain. Cleanup never runs after a failed activation.
 
 Nginx configuration is validated before reload. Each deployment reconciles only
 its declared proxy file, allowing several environments to share one VPS safely.
+
+Scheduled deployments add a systemd `.timer` beside a sandboxed oneshot service.
+The timer, rather than the short-lived service, is enabled and used for health
+and lifecycle operations.
 
 ## Privilege model
 

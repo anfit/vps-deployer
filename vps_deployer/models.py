@@ -133,6 +133,13 @@ class ReleaseInclude:
 
 
 @dataclass(frozen=True)
+class Timer:
+    on_calendar: str
+    persistent: bool = True
+    randomized_delay_sec: int = 0
+
+
+@dataclass(frozen=True)
 class Deployment:
     name: str
     host: str
@@ -148,6 +155,7 @@ class Deployment:
     secrets: dict[str, ValueRef] = field(default_factory=dict)
     storage: tuple[Storage, ...] = ()
     http_proxy: HttpProxy | None = None
+    timer: Timer | None = None
     manifest_path: Path = Path()
 
     @classmethod
@@ -209,6 +217,20 @@ class Deployment:
                     raise ConfigError(f"{source_name}: HTTP-only proxy must not declare certificates")
                 certificate = certificate_key = None
             proxy = HttpProxy(proxy_name, domain, upstream, tls, certificate, certificate_key)
+        timer_data = data.get("timer")
+        timer = None
+        if timer_data is not None:
+            if not isinstance(timer_data, dict):
+                raise ConfigError(f"{source_name}: timer must be a mapping")
+            on_calendar = safe_text(str(_required(timer_data, "on_calendar", source_name)),
+                                    f"{source_name}: timer.on_calendar", systemd=True)
+            persistent = timer_data.get("persistent", True)
+            delay = timer_data.get("randomized_delay_sec", 0)
+            if not isinstance(persistent, bool) or not isinstance(delay, int) or not 0 <= delay <= 86400:
+                raise ConfigError(f"{source_name}: invalid timer settings")
+            if data.get("healthcheck") is not None or proxy is not None:
+                raise ConfigError(f"{source_name}: timer deployments cannot declare healthcheck or http_proxy")
+            timer = Timer(on_calendar, persistent, delay)
         src = local_path(str(_required(release, "source", source_name)), path.parent, f"{source_name}: release.source")
         includes: list[ReleaseInclude] = []
         for index, item in enumerate(release.get("include", []) or []):
@@ -223,4 +245,4 @@ class Deployment:
                 raise ConfigError(f"{source_name}: unsafe release include target")
             includes.append(ReleaseInclude(include_source, target))
         return cls(name, str(_required(data, "host", source_name)), user, privileged, src, tuple(includes), command, wd, restart,
-                   data.get("healthcheck"), env, secrets, stores, proxy, path)
+                   data.get("healthcheck"), env, secrets, stores, proxy, timer, path)

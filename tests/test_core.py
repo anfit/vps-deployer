@@ -7,7 +7,7 @@ from vps_deployer.config import Repository
 from vps_deployer.deployment import (content_hash, env_file, env_matches, git_metadata,
                                      releases_to_prune, select_rollback, validate_archive)
 from vps_deployer.models import ConfigError, Deployment, Host
-from vps_deployer.systemd import render_unit
+from vps_deployer.systemd import render_timer, render_unit, timer_name
 from vps_deployer.nginx import render_proxy
 
 
@@ -78,6 +78,44 @@ def test_systemd_hardening_and_storage(tmp_path):
     assert "ReadWritePaths=/var/lib/demo" in unit
     assert "WorkingDirectory=/srv/vps-deployer/demo-prod/current/app" in unit
     assert "ExecStart=/srv/vps-deployer/demo-prod/current/app/bin/demo" in unit
+
+
+def test_timer_renders_oneshot_service_and_timer_unit(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({
+        "name": "cleanup-prod", "host": "prod", "service": {"user": "svc-cleanup"},
+        "release": {"source": str(artifact)}, "runtime": {"command": "./cleanup.sh"},
+        "timer": {"on_calendar": "*-*-* 03:00:00", "persistent": True,
+                  "randomized_delay_sec": 300},
+    }, tmp_path / "timer.yaml")
+    service = render_unit(dep, "/srv/vps-deployer")
+    timer = render_timer(dep)
+    assert "Type=oneshot" in service and "Restart=" not in service
+    assert "OnCalendar=*-*-* 03:00:00" in timer
+    assert "Persistent=true" in timer and "RandomizedDelaySec=300" in timer
+    assert "Unit=vps-deployer-cleanup-prod.service" in timer
+    assert timer_name(dep) == "vps-deployer-cleanup-prod.timer"
+
+
+@pytest.mark.parametrize("timer", [
+    {"on_calendar": "daily\nOnCalendar=minutely"},
+    {"on_calendar": "daily", "randomized_delay_sec": -1},
+    {"on_calendar": "daily", "randomized_delay_sec": 86401},
+])
+def test_timer_rejects_unsafe_settings(tmp_path, timer):
+    with pytest.raises(ConfigError):
+        Deployment.parse({"name": "cleanup", "host": "prod", "service": {"user": "svc-cleanup"},
+                          "release": {"source": "x"}, "runtime": {"command": "./cleanup.sh"},
+                          "timer": timer}, tmp_path / "timer.yaml")
+
+
+def test_timer_rejects_persistent_service_features(tmp_path):
+    with pytest.raises(ConfigError, match="cannot declare"):
+        Deployment.parse({"name": "cleanup", "host": "prod", "service": {"user": "svc-cleanup"},
+                          "release": {"source": "x"}, "runtime": {"command": "./cleanup.sh"},
+                          "timer": {"on_calendar": "daily"},
+                          "healthcheck": {"type": "http", "url": "http://127.0.0.1:1"}},
+                         tmp_path / "timer.yaml")
 
 
 def test_http_proxy_is_rendered_per_deployment(tmp_path):

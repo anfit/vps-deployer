@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from .config import Repository
 from .models import ConfigError, Deployment, Host
 from .remote import RemoteHost
-from .systemd import render_unit, unit_name
+from .systemd import render_timer, render_unit, timer_name, unit_name
 from .nginx import nginx_name, render_proxy
 
 
@@ -145,6 +145,7 @@ class Reconciler:
         self.base = f"{self.host.managed_root}/{dep.name}"
         self.release_path = f"{self.base}/releases/{release}"
         self.unit_path = f"/etc/systemd/system/{unit_name(dep)}"
+        self.timer_path = f"/etc/systemd/system/{timer_name(dep)}" if dep.timer else None
         self.env_path = f"/etc/vps-deployer/{dep.name}.env"
         self.proxy_available = f"/etc/nginx/sites-available/{nginx_name(dep)}" if dep.http_proxy else None
         self.proxy_enabled = f"/etc/nginx/sites-enabled/{nginx_name(dep)}" if dep.http_proxy else None
@@ -159,10 +160,13 @@ class Reconciler:
                 actions.append(Action("CREATE", path))
         env_changed = not env_matches(self.remote.read(self.env_path, sudo=True), values, secret_keys, require_secrets)
         unit_changed = self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root)
+        timer_changed = bool(self.dep.timer and self.remote.read(str(self.timer_path), sudo=True) != render_timer(self.dep))
         if env_changed:
             actions.append(Action("UPDATE", "environment file"))
         if unit_changed:
             actions.append(Action("UPDATE", "systemd unit"))
+        if timer_changed:
+            actions.append(Action("UPDATE", "systemd timer"))
         if self.dep.http_proxy and (self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep) or
                                     not self.remote.exists(str(self.proxy_enabled), sudo=True)):
             actions.append(Action("UPDATE", f"HTTP proxy {self.dep.http_proxy.domain}"))
@@ -170,9 +174,10 @@ class Reconciler:
             actions.append(Action("INSTALL", f"release {self.release}"))
         active = self.active_release()
         if active != self.release:
-            actions.extend([Action("ACTIVATE", f"release {self.release}"), Action("RESTART", "service")])
-        elif env_changed or unit_changed:
-            actions.append(Action("RESTART", "service"))
+            actions.extend([Action("ACTIVATE", f"release {self.release}"),
+                            Action("RESTART", "timer" if self.dep.timer else "service")])
+        elif env_changed or unit_changed or timer_changed:
+            actions.append(Action("RESTART", "timer" if self.dep.timer else "service"))
         return actions
 
     def active_release(self) -> str | None:
@@ -210,23 +215,29 @@ class Reconciler:
             self._install_release()
         old_env = self.remote.read(self.env_path, sudo=True)
         old_unit = self.remote.read(self.unit_path, sudo=True)
+        old_timer = self.remote.read(str(self.timer_path), sudo=True) if self.dep.timer else None
         new_env, new_unit = env_file(values), render_unit(self.dep, self.host.managed_root)
+        new_timer = render_timer(self.dep) if self.dep.timer else None
         if old_env != new_env:
             self._write_privileged(self.env_path, new_env, "0640", f"root:{self.dep.user}")
+        units_changed = old_unit != new_unit or old_timer != new_timer
         if old_unit != new_unit:
             self._write_privileged(self.unit_path, new_unit, "0644", "root:root")
+        if self.dep.timer and old_timer != new_timer:
+            self._write_privileged(str(self.timer_path), str(new_timer), "0644", "root:root")
+        if units_changed:
             self.remote.run(["systemctl", "daemon-reload"], sudo=True)
-            self.remote.run(["systemctl", "enable", unit_name(self.dep)], sudo=True)
+            self.remote.run(["systemctl", "enable", self.supervisor_name], sudo=True)
         previous = self.active_release()
         if previous != self.release:
             self.remote.run(["ln", "-sfn", f"releases/{self.release}", f"{self.base}/current"], sudo=True)
-            self.remote.run(["systemctl", "restart", unit_name(self.dep)], sudo=True)
+            self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
             if not self._healthy() and previous:
                 self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/current"], sudo=True)
-                self.remote.run(["systemctl", "restart", unit_name(self.dep)], sudo=True)
+                self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
                 raise RuntimeError("health check failed; previous release restored")
-        elif old_env != new_env or old_unit != new_unit:
-            self.remote.run(["systemctl", "restart", unit_name(self.dep)], sudo=True)
+        elif old_env != new_env or units_changed:
+            self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
             if not self._healthy():
                 raise RuntimeError("health check failed after configuration restart")
         if self.dep.http_proxy:
@@ -298,8 +309,15 @@ class Reconciler:
         content = self.remote.read(f"{self.base}/current/build.properties", sudo=True)
         return dict(line.split("=", 1) for line in content.splitlines() if "=" in line)
 
+    @property
+    def supervisor_name(self) -> str:
+        return timer_name(self.dep) if self.dep.timer else unit_name(self.dep)
+
     def _healthy(self) -> bool:
         hc = self.dep.healthcheck
+        if self.dep.timer:
+            return self.remote.run(["systemctl", "is-active", "--quiet", timer_name(self.dep)],
+                                   sudo=True, check=False).returncode == 0
         if not hc:
             return self.remote.run(["systemctl", "is-active", "--quiet", unit_name(self.dep)], sudo=True, check=False).returncode == 0
         if hc.get("type") != "http" or not hc.get("url"):
@@ -311,6 +329,10 @@ class Reconciler:
         if self.dep.privileged and not allow_privileged:
             raise ConfigError("privileged deployment removal requires --allow-privileged")
         actions: list[Action] = []
+        if self.dep.timer and self.remote.exists(str(self.timer_path), sudo=True):
+            actions.append(Action("REMOVE", "systemd timer"))
+            self.remote.run(["systemctl", "disable", "--now", timer_name(self.dep)], sudo=True, check=False)
+            self.remote.run(["rm", "-f", str(self.timer_path)], sudo=True)
         if self.remote.exists(self.unit_path, sudo=True):
             actions.append(Action("REMOVE", "systemd unit"))
             self.remote.run(["systemctl", "disable", "--now", unit_name(self.dep)], sudo=True, check=False)

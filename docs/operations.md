@@ -47,6 +47,9 @@ Review every plan. A repeated plan after a successful apply should report
 check passes, and the active `build.properties` matches the desired release and
 Git commit.
 
+For timer deployments, status requires the timer to be active instead of the
+oneshot service. Logs still come from the associated `.service` unit.
+
 Use `--release-id ID` only for deliberate operator-controlled release naming.
 Content-addressed IDs are safer for ordinary deployments.
 

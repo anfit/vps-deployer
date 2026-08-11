@@ -74,6 +74,20 @@ http_proxy:
   certificate_key: /etc/letsencrypt/live/example.org/privkey.pem
 ```
 
+For a scheduled oneshot deployment, omit `healthcheck` and `http_proxy` and add:
+
+```yaml
+timer:
+  on_calendar: "*-*-* 03:00:00"
+  persistent: true
+  randomized_delay_sec: 300
+```
+
+Timer deployments generate both `.service` and `.timer` units. The service is
+`Type=oneshot`; the timer is enabled and supervised during apply, status,
+rollback, and removal. `on_calendar` uses systemd calendar syntax. Randomized
+delay is bounded to 0–86400 seconds.
+
 For a trusted-network HTTP-only site, disable TLS explicitly and omit the
 certificate fields:
 
@@ -136,6 +150,8 @@ never deleted by rollback or remove.
 
 HTTP health checks use curl from the target host with bounded retries. Prefer a
 loopback URL so application health is tested independently of DNS and TLS.
+Health checks and HTTP proxies are not valid for timer deployments; status checks
+that the timer unit is active instead.
 
 ### HTTP proxy
 
