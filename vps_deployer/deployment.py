@@ -286,7 +286,7 @@ class Reconciler:
         files = (
             (self.env_path, environment, "0640", f"root:{self.dep.user}"),
             (self.unit_path, unit, "0644", "root:root"),
-            (self.timer_path if self.dep.timer else None, timer, "0644", "root:root"),
+            (self.timer_path, timer, "0644", "root:root"),
         )
         for path, content, mode, owner in files:
             if path is None:
@@ -298,18 +298,26 @@ class Reconciler:
         self.remote.run(["systemctl", "daemon-reload"], sudo=True)
 
     def _fail_activation(self, previous: str | None, environment: str | None,
-                         unit: str | None, timer: str | None) -> None:
-        message = self._rollback_activation(previous, environment, unit, timer)
+                         unit: str | None, timer: str | None,
+                         old_supervisor: str | None) -> None:
+        message = self._rollback_activation(previous, environment, unit, timer, old_supervisor)
         raise RuntimeError(f"health check failed; {message}")
 
     def _rollback_activation(self, previous: str | None, environment: str | None,
-                             unit: str | None, timer: str | None) -> str:
+                             unit: str | None, timer: str | None,
+                             old_supervisor: str | None) -> str:
+        new_supervisor = self.supervisor_name
+        if old_supervisor != new_supervisor:
+            self.remote.run(["systemctl", "disable", "--now", new_supervisor], sudo=True, check=False)
         if previous:
             self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/current"], sudo=True)
             self._restore_configuration(environment, unit, timer)
-            self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
+            if old_supervisor is None:
+                raise RuntimeError("previous release has no supervisor configuration")
+            self.remote.run(["systemctl", "enable", old_supervisor], sudo=True)
+            self.remote.run(["systemctl", "restart", old_supervisor], sudo=True)
             return "previous release and configuration restored"
-        self.remote.run(["systemctl", "disable", "--now", self.supervisor_name], sudo=True, check=False)
+        self.remote.run(["systemctl", "disable", "--now", new_supervisor], sudo=True, check=False)
         self._restore_configuration(environment, unit, timer)
         return "first deployment stopped"
 
@@ -336,8 +344,10 @@ class Reconciler:
             self._install_release()
         old_env = self.remote.read(self.env_path, sudo=True)
         old_unit = self.remote.read(self.unit_path, sudo=True)
-        old_timer = self.remote.read(str(self.timer_path), sudo=True) if self.dep.timer else None
+        old_timer = self.remote.read(str(self.timer_path), sudo=True)
         old_resources = self.managed_resources()
+        old_supervisor = (timer_name(self.dep) if old_timer is not None or old_resources.get("timer")
+                          else unit_name(self.dep)) if old_unit is not None else None
         new_env, new_unit = env_file(values), render_unit(self.dep, self.host.managed_root)
         new_timer = render_timer(self.dep) if self.dep.timer else None
         if old_env != new_env:
@@ -355,12 +365,17 @@ class Reconciler:
             self.remote.run(["ln", "-sfn", f"releases/{self.release}", f"{self.base}/current"], sudo=True)
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
             if not self._healthy():
-                self._fail_activation(previous, old_env, old_unit, old_timer)
+                self._fail_activation(previous, old_env, old_unit, old_timer, old_supervisor)
         elif old_env != new_env or units_changed:
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
             if not self._healthy():
                 self._restore_configuration(old_env, old_unit, old_timer)
-                self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
+                if old_supervisor is None:
+                    raise RuntimeError("previous configuration has no supervisor")
+                if old_supervisor != self.supervisor_name:
+                    self.remote.run(["systemctl", "disable", "--now", self.supervisor_name], sudo=True, check=False)
+                self.remote.run(["systemctl", "enable", old_supervisor], sudo=True)
+                self.remote.run(["systemctl", "restart", old_supervisor], sudo=True)
                 raise RuntimeError("health check failed; previous configuration restored")
         try:
             if self.dep.http_proxy:
@@ -368,11 +383,16 @@ class Reconciler:
             self._reconcile_obsolete_resources(old_resources)
         except (RemoteError, RuntimeError) as exc:
             if previous != self.release:
-                outcome = self._rollback_activation(previous, old_env, old_unit, old_timer)
+                outcome = self._rollback_activation(previous, old_env, old_unit, old_timer, old_supervisor)
                 raise RuntimeError(f"proxy reconciliation failed; {outcome}") from exc
             if old_env != new_env or units_changed:
                 self._restore_configuration(old_env, old_unit, old_timer)
-                self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
+                if old_supervisor is None:
+                    raise RuntimeError("previous configuration has no supervisor")
+                if old_supervisor != self.supervisor_name:
+                    self.remote.run(["systemctl", "disable", "--now", self.supervisor_name], sudo=True, check=False)
+                self.remote.run(["systemctl", "enable", old_supervisor], sudo=True)
+                self.remote.run(["systemctl", "restart", old_supervisor], sudo=True)
             raise RuntimeError("proxy reconciliation failed; previous configuration restored") from exc
         desired_state = json.dumps(self.desired_resources, sort_keys=True, separators=(",", ":")) + "\n"
         if self.remote.read(self.state_path, sudo=True) != desired_state:

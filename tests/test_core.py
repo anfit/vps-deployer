@@ -10,7 +10,7 @@ from vps_deployer.deployment import (application_build_properties, content_hash,
                                      parse_build_properties, render_build_properties,
                                      releases_to_prune, select_rollback, validate_archive)
 from vps_deployer.models import ConfigError, Deployment, Host
-from vps_deployer.systemd import render_timer, render_unit, timer_name
+from vps_deployer.systemd import render_timer, render_unit, timer_name, unit_name
 from vps_deployer.nginx import render_proxy
 
 
@@ -447,7 +447,8 @@ def test_failed_activation_restores_release_and_configuration(tmp_path):
     repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
     remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "new")
     with pytest.raises(RuntimeError, match="release and configuration restored"):
-        reconciler._fail_activation("old", "OLD_ENV\n", "OLD_UNIT\n", None)
+        reconciler._fail_activation("old", "OLD_ENV\n", "OLD_UNIT\n", None,
+                                    unit_name(dep))
     commands = [call[0] for call in remote.calls]
     assert ["ln", "-sfn", "releases/old", f"{reconciler.base}/current"] in commands
     assert ["write_file", reconciler.env_path, b"OLD_ENV\n", "0640", "root", dep.user] in commands
@@ -461,12 +462,39 @@ def test_failed_first_activation_stops_service_and_removes_new_configuration(tmp
     repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
     remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "new")
     with pytest.raises(RuntimeError, match="first deployment stopped"):
-        reconciler._fail_activation(None, None, None, None)
+        reconciler._fail_activation(None, None, None, None, None)
     commands = [call[0] for call in remote.calls]
     assert commands[0] == ["systemctl", "disable", "--now", reconciler.supervisor_name]
     assert ["rm", "-f", reconciler.env_path] in commands
     assert ["rm", "-f", reconciler.unit_path] in commands
     assert commands[-1] == ["systemctl", "daemon-reload"]
+
+
+@pytest.mark.parametrize("desired_timer", [True, False])
+def test_failed_supervisor_transition_restores_old_lifecycle(tmp_path, desired_timer):
+    from vps_deployer.deployment import Reconciler
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    data = {"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+            "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"}}
+    if desired_timer:
+        data["timer"] = {"on_calendar": "daily"}
+    dep = Deployment.parse(data, tmp_path / "d.yaml")
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "new")
+    old_supervisor = unit_name(dep) if desired_timer else timer_name(dep)
+    old_timer = None if desired_timer else "OLD_TIMER\n"
+    outcome = reconciler._rollback_activation(
+        "old", "OLD_ENV\n", "OLD_UNIT\n", old_timer, old_supervisor)
+    commands = [call[0] for call in remote.calls]
+    assert outcome == "previous release and configuration restored"
+    assert ["systemctl", "disable", "--now", reconciler.supervisor_name] in commands
+    assert ["systemctl", "enable", old_supervisor] in commands
+    assert commands[-1] == ["systemctl", "restart", old_supervisor]
+    if old_timer:
+        assert any(call[0] == "write_file" and call[1] == reconciler.timer_path
+                   for call in commands)
+    else:
+        assert ["rm", "-f", reconciler.timer_path] in commands
 
 
 def test_obsolete_timer_and_proxy_are_reconciled_from_persisted_state(tmp_path):
