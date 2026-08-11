@@ -100,6 +100,10 @@ missing. Root services require `privileged: true` and explicit
 at safe relative targets. Local paths accept explicit `${NAME}` environment
 roots. Missing roots, unresolved variables, and `..` traversal are rejected.
 
+Tarball sources are copied to a private local snapshot and inspected before upload.
+Only regular files and directories with release-relative paths are accepted;
+links, devices, traversal, and absolute member paths are rejected.
+
 Directory sources can provide `.vps-deployer-ignore`. Each non-comment line is a
 glob matched against repository-relative POSIX paths. Default exclusions include
 Git metadata, virtual environments, IDE state, caches, common secret extensions,

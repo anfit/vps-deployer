@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
+import shutil
 import tarfile
 import tempfile
 import fnmatch
@@ -96,6 +97,22 @@ def release_id(dep: Deployment, explicit: str | None = None) -> str:
         return explicit
     # Content-addressed defaults make repeated apply operations genuinely idempotent.
     return content_hash(dep.source, dep.includes)
+
+
+def validate_archive(path: Path) -> None:
+    """Reject tar entries that cannot be extracted safely into a release."""
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            for member in archive.getmembers():
+                name = member.name
+                target = PurePosixPath(name)
+                if (not name or target.is_absolute() or ".." in target.parts or
+                        any(ord(char) < 32 or ord(char) == 127 for char in name)):
+                    raise ConfigError(f"unsafe archive member path: {name!r}")
+                if not (member.isfile() or member.isdir()):
+                    raise ConfigError(f"unsupported archive member type: {name!r}")
+    except (tarfile.TarError, OSError) as exc:
+        raise ConfigError(f"invalid release archive: {path}") from exc
 
 
 def env_file(values: dict[str, str]) -> str:
@@ -256,8 +273,11 @@ class Reconciler:
         else:
             if self.dep.includes:
                 raise ConfigError("release includes require a directory artifact source")
-            archive = self.dep.source
+            temp = tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+            temp.close(); archive = Path(temp.name); cleanup = archive
+            shutil.copyfile(self.dep.source, archive)
         try:
+            validate_archive(archive)
             self.remote.upload(archive, upload)
             self.remote.run(["mkdir", "-p", self.release_path], sudo=True)
             self.remote.run(["tar", "-xzf", upload, "-C", self.release_path], sudo=True)

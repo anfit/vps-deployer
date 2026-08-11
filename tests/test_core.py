@@ -5,7 +5,7 @@ import pytest
 
 from vps_deployer.config import Repository
 from vps_deployer.deployment import (content_hash, env_file, env_matches, git_metadata,
-                                     releases_to_prune, select_rollback)
+                                     releases_to_prune, select_rollback, validate_archive)
 from vps_deployer.models import ConfigError, Deployment, Host
 from vps_deployer.systemd import render_unit
 from vps_deployer.nginx import render_proxy
@@ -230,3 +230,39 @@ def test_release_pruning_keeps_active_and_immediate_predecessor():
 
 def test_release_pruning_ignores_unsafe_directory_names():
     assert releases_to_prune(["new", "previous", "../state", "bad/name"], "new", "previous") == []
+
+
+@pytest.mark.parametrize(("name", "kind"), [
+    ("../outside", "file"),
+    ("/etc/shadow", "file"),
+    ("escape", "symlink"),
+    ("device", "device"),
+])
+def test_release_archive_rejects_unsafe_members(tmp_path, name, kind):
+    import io
+    import tarfile
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        member = tarfile.TarInfo(name)
+        if kind == "file":
+            member.size = 1
+            output.addfile(member, io.BytesIO(b"x"))
+        elif kind == "symlink":
+            member.type = tarfile.SYMTYPE
+            member.linkname = "/etc/shadow"
+            output.addfile(member)
+        else:
+            member.type = tarfile.CHRTYPE
+            output.addfile(member)
+    with pytest.raises(ConfigError):
+        validate_archive(archive)
+
+
+def test_release_archive_accepts_regular_files_and_directories(tmp_path):
+    import io
+    import tarfile
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        directory = tarfile.TarInfo("bin"); directory.type = tarfile.DIRTYPE; output.addfile(directory)
+        member = tarfile.TarInfo("bin/app"); member.size = 3; output.addfile(member, io.BytesIO(b"app"))
+    validate_archive(archive)
