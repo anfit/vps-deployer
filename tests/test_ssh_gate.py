@@ -48,3 +48,20 @@ def test_gate_honors_configured_managed_root():
     operation = request("path-exists", "-e", "/srv/vps-deployer/demo/current")
     with pytest.raises(ValueError):
         build_argv(operation, ROOT, STORAGE)
+
+
+@pytest.mark.parametrize("value", ["bad\nvalue", "bad\tvalue", "bad\u202evalue", "bad\u2028value"])
+def test_gate_rejects_ascii_and_unicode_controls(value):
+    with pytest.raises(ValueError):
+        build_argv(request("path-exists", "-e", f"/srv/custom/demo/{value}"), ROOT, STORAGE)
+
+
+@pytest.mark.parametrize("tail", [
+    ["--since", "--root=/", "--follow"],
+    ["--output", "json"],
+    ["--since"],
+])
+def test_gate_rejects_journal_option_injection(tail):
+    operation = request("service-logs", "-u", "vps-deployer-demo.service", "--no-pager", "-n", "100", *tail)
+    with pytest.raises(ValueError):
+        build_argv(operation, ROOT, STORAGE)

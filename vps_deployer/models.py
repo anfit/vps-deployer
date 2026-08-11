@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 import os
 import re
+import unicodedata
 from typing import Any
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -17,7 +18,8 @@ class ConfigError(ValueError):
 
 
 def safe_text(value: str, where: str, *, systemd: bool = False) -> str:
-    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+    if any(unicodedata.category(char)[0] == "C" or unicodedata.category(char) in {"Zl", "Zp"}
+           for char in value):
         raise ConfigError(f"{where}: control characters are not allowed")
     if systemd and "%" in value:
         raise ConfigError(f"{where}: systemd specifiers are not allowed")

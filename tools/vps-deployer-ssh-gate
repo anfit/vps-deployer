@@ -10,6 +10,7 @@ from pathlib import PurePosixPath
 import re
 import shutil
 import sys
+import unicodedata
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -42,7 +43,8 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
     args = request.get("arguments")
     if not isinstance(operation, str) or not isinstance(args, list) or not all(isinstance(x, str) for x in args):
         raise ValueError("invalid operation request")
-    if any("\x00" in x or "\n" in x or "\r" in x for x in args):
+    if any(any(unicodedata.category(char)[0] == "C" or unicodedata.category(char) in {"Zl", "Zp"}
+               for char in value) for value in args):
         raise ValueError("invalid operation argument")
 
     if operation == "read-file" and len(args) == 1 and _owned_file(args[0], managed_root, storage):
@@ -102,8 +104,12 @@ def build_argv(request: dict[str, object], managed_root: str, storage: set[str])
         allowed_mode = args[mode_index] == "u=rwX,g=rX,o=" if recursive else args[mode_index] == "0750"
         if allowed_mode and _deployment_path(args[path_index], managed_root):
             return ["chmod", *args]
-    if operation == "service-logs" and len(args) >= 4 and args[0] == "-u" and SAFE_UNIT.fullmatch(args[1]) and args[2] == "--no-pager":
-        return ["journalctl", *args]
+    if operation == "service-logs" and len(args) >= 5 and args[:1] == ["-u"] and SAFE_UNIT.fullmatch(args[1]) and args[2:4] == ["--no-pager", "-n"] and args[4].isdigit():
+        tail = args[5:]
+        if tail[:1] == ["--since"] and len(tail) >= 2 and tail[1] and not tail[1].startswith("-"):
+            tail = tail[2:]
+        if tail in ([], ["--follow"]):
+            return ["journalctl", *args]
     raise ValueError("operation is not allowed")
 
 
@@ -115,7 +121,7 @@ def main() -> None:
     if not PurePosixPath(policy.managed_root).is_absolute() or ".." in PurePosixPath(policy.managed_root).parts:
         raise ValueError("invalid managed root policy")
     storage = set(policy.storage)
-    if any(not PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts for path in storage):
+    if any(not PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts or path == "/" for path in storage):
         raise ValueError("invalid storage policy")
     original = os.environ.get("SSH_ORIGINAL_COMMAND", "")
     match = re.fullmatch(r"vps-deployer-op ([A-Za-z0-9_=-]+)", original)

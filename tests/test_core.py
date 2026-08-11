@@ -203,6 +203,25 @@ def test_redacted_plan_compares_secret_keys_without_secret_values():
     assert not env_matches(current, {"PORT": "5101"}, set(), False)
 
 
+@pytest.mark.parametrize("unsafe", ["line1\nline2", "tab\tvalue", "format\u202evalue", "separator\u2028value"])
+def test_resolved_environment_rejects_control_characters(tmp_path, monkeypatch, unsafe):
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    repo.deployments[dep.name] = dep; repo.globals["prod"] = {"TZ": unsafe}
+    monkeypatch.setenv("DEMO_TOKEN", "safe")
+    with pytest.raises(ConfigError, match="control characters"):
+        repo.resolve_environment(dep, True)
+
+
+def test_resolved_secret_rejects_multiline_injection(tmp_path, monkeypatch):
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    repo.deployments[dep.name] = dep; repo.globals["prod"] = {"TZ": "UTC"}
+    monkeypatch.setenv("DEMO_TOKEN", "secret\nINJECTED=value")
+    with pytest.raises(ConfigError, match="control characters"):
+        repo.resolve_environment(dep, True)
+
+
 def test_git_build_metadata_records_exact_revision(tmp_path):
     import subprocess
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)

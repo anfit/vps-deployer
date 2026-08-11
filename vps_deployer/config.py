@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 import yaml
 
-from .models import ConfigError, Deployment, Host
+from .models import ConfigError, Deployment, Host, safe_text
 
 
 class Repository:
@@ -58,7 +58,8 @@ class Repository:
         secret_keys: set[str] = set()
         globals_ = self._global_values(dep)
         for key, ref in dep.environment.items():
-            result[key] = ref.literal if ref.literal is not None else globals_[str(ref.from_global)]
+            value = ref.literal if ref.literal is not None else globals_[str(ref.from_global)]
+            result[key] = safe_text(value, f"{dep.name}: environment.{key}")
         for key, ref in dep.secrets.items():
             secret_keys.add(key)
             value = os.environ.get(str(ref.from_env))
@@ -66,7 +67,7 @@ class Repository:
                 if require_secrets:
                     raise ConfigError(f"{dep.name}: required secret environment variable is not set for {key}")
                 value = "<secret>"
-            result[key] = value
+            result[key] = safe_text(value, f"{dep.name}: secrets.{key}")
         return result, secret_keys
 
 
