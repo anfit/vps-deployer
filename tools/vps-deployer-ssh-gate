@@ -33,7 +33,7 @@ def _deployment_path(path: str, managed_root: str) -> bool:
 
 def _owned_file(path: str, managed_root: str, storage: set[str]) -> bool:
     return (_deployment_path(path, managed_root) or path in storage or
-            re.fullmatch(r"/etc/vps-deployer/[a-z][a-z0-9-]{0,62}\.env", path) is not None or
+            re.fullmatch(r"/etc/vps-deployer/[a-z][a-z0-9-]{0,62}\.(env|state)", path) is not None or
             re.fullmatch(r"/etc/systemd/system/vps-deployer-[a-z][a-z0-9-]{0,62}\.(service|timer)", path) is not None or
             re.fullmatch(r"/etc/nginx/sites-(available|enabled)/[a-z][a-z0-9-]{0,62}", path) is not None)
 

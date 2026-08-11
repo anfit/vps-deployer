@@ -29,6 +29,7 @@ For deployment `example-prod` under the default managed root:
   current -> releases/<release-id>
   previous -> releases/<release-id>
 /etc/vps-deployer/example-prod.env
+/etc/vps-deployer/example-prod.state
 /etc/systemd/system/vps-deployer-example-prod.service
 /etc/nginx/sites-available/<proxy-name>      # when http_proxy is declared
 /etc/nginx/sites-enabled/<proxy-name>
@@ -82,6 +83,11 @@ its declared proxy file, allowing several environments to share one VPS safely.
 Scheduled deployments add a systemd `.timer` beside a sandboxed oneshot service.
 The timer, rather than the short-lived service, is enabled and used for health
 and lifecycle operations.
+
+The state file records optional resources owned by the deployment. A later apply
+reconciles absence as desired state: obsolete timers and nginx sites are disabled
+and removed, and service/timer mode transitions disable the former supervisor
+after the replacement is healthy.
 
 ## Privilege model
 

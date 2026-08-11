@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 from pathlib import Path, PurePosixPath
 import shlex
 import shutil
@@ -144,8 +145,9 @@ class Reconciler:
         self.base = f"{self.host.managed_root}/{dep.name}"
         self.release_path = f"{self.base}/releases/{release}"
         self.unit_path = f"/etc/systemd/system/{unit_name(dep)}"
-        self.timer_path = f"/etc/systemd/system/{timer_name(dep)}" if dep.timer else None
+        self.timer_path = f"/etc/systemd/system/{timer_name(dep)}"
         self.env_path = f"/etc/vps-deployer/{dep.name}.env"
+        self.state_path = f"/etc/vps-deployer/{dep.name}.state"
         self.proxy_available = f"/etc/nginx/sites-available/{nginx_name(dep)}" if dep.http_proxy else None
         self.proxy_enabled = f"/etc/nginx/sites-enabled/{nginx_name(dep)}" if dep.http_proxy else None
 
@@ -159,13 +161,19 @@ class Reconciler:
                 actions.append(Action("CREATE", path))
         env_changed = not env_matches(self.remote.read(self.env_path, sudo=True), values, secret_keys, require_secrets)
         unit_changed = self.remote.read(self.unit_path, sudo=True) != render_unit(self.dep, self.host.managed_root)
-        timer_changed = bool(self.dep.timer and self.remote.read(str(self.timer_path), sudo=True) != render_timer(self.dep))
+        timer_changed = bool(self.dep.timer and self.remote.read(self.timer_path, sudo=True) != render_timer(self.dep))
+        managed = self.managed_resources()
         if env_changed:
             actions.append(Action("UPDATE", "environment file"))
         if unit_changed:
             actions.append(Action("UPDATE", "systemd unit"))
         if timer_changed:
             actions.append(Action("UPDATE", "systemd timer"))
+        if managed.get("timer") and not self.dep.timer:
+            actions.append(Action("REMOVE", "obsolete systemd timer"))
+        desired_proxy = nginx_name(self.dep) if self.dep.http_proxy else None
+        if managed.get("proxy") and managed.get("proxy") != desired_proxy:
+            actions.append(Action("REMOVE", f"obsolete HTTP proxy {managed['proxy']}"))
         if self.dep.http_proxy and (self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep) or
                                     not self.remote.exists(str(self.proxy_enabled), sudo=True)):
             actions.append(Action("UPDATE", f"HTTP proxy {self.dep.http_proxy.domain}"))
@@ -177,7 +185,27 @@ class Reconciler:
                             Action("RESTART", "timer" if self.dep.timer else "service")])
         elif env_changed or unit_changed or timer_changed:
             actions.append(Action("RESTART", "timer" if self.dep.timer else "service"))
+        if managed != self.desired_resources:
+            actions.append(Action("UPDATE", "managed resource metadata"))
         return actions
+
+    @property
+    def desired_resources(self) -> dict[str, object]:
+        return {"timer": bool(self.dep.timer),
+                "proxy": nginx_name(self.dep) if self.dep.http_proxy else None}
+
+    def managed_resources(self) -> dict[str, object]:
+        content = self.remote.read(self.state_path, sudo=True)
+        if content is None:
+            return {"timer": False, "proxy": None}
+        try:
+            state = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"{self.dep.name}: invalid managed resource metadata") from exc
+        if (not isinstance(state, dict) or not isinstance(state.get("timer"), bool) or
+                (state.get("proxy") is not None and not isinstance(state.get("proxy"), str))):
+            raise ConfigError(f"{self.dep.name}: invalid managed resource metadata")
+        return {"timer": state["timer"], "proxy": state.get("proxy")}
 
     def active_release(self) -> str | None:
         result = self.remote.run(["readlink", f"{self.base}/current"], sudo=True, check=False)
@@ -196,7 +224,7 @@ class Reconciler:
         files = (
             (self.env_path, environment, "0640", f"root:{self.dep.user}"),
             (self.unit_path, unit, "0644", "root:root"),
-            (self.timer_path, timer, "0644", "root:root"),
+            (self.timer_path if self.dep.timer else None, timer, "0644", "root:root"),
         )
         for path, content, mode, owner in files:
             if path is None:
@@ -242,6 +270,7 @@ class Reconciler:
         old_env = self.remote.read(self.env_path, sudo=True)
         old_unit = self.remote.read(self.unit_path, sudo=True)
         old_timer = self.remote.read(str(self.timer_path), sudo=True) if self.dep.timer else None
+        old_resources = self.managed_resources()
         new_env, new_unit = env_file(values), render_unit(self.dep, self.host.managed_root)
         new_timer = render_timer(self.dep) if self.dep.timer else None
         if old_env != new_env:
@@ -250,7 +279,7 @@ class Reconciler:
         if old_unit != new_unit:
             self._write_privileged(self.unit_path, new_unit, "0644", "root:root")
         if self.dep.timer and old_timer != new_timer:
-            self._write_privileged(str(self.timer_path), str(new_timer), "0644", "root:root")
+            self._write_privileged(self.timer_path, str(new_timer), "0644", "root:root")
         if units_changed:
             self.remote.run(["systemctl", "daemon-reload"], sudo=True)
             self.remote.run(["systemctl", "enable", self.supervisor_name], sudo=True)
@@ -276,12 +305,32 @@ class Reconciler:
             if proxy_changed:
                 self.remote.run(["nginx", "-t"], sudo=True)
                 self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
+        self._reconcile_obsolete_resources(old_resources)
+        desired_state = json.dumps(self.desired_resources, sort_keys=True, separators=(",", ":")) + "\n"
+        if self.remote.read(self.state_path, sudo=True) != desired_state:
+            self._write_privileged(self.state_path, desired_state, "0644", "root:root")
         # Prune only after the whole activation (including proxy reconciliation)
         # succeeded. The prior active release is retained as the rollback target.
         if previous and previous != self.release:
             self.remote.run(["ln", "-sfn", f"releases/{previous}", f"{self.base}/previous"], sudo=True)
             self._prune_releases(previous)
         return actions
+
+    def _reconcile_obsolete_resources(self, previous: dict[str, object]) -> None:
+        if previous.get("timer") and not self.dep.timer:
+            self.remote.run(["systemctl", "disable", "--now", timer_name(self.dep)], sudo=True, check=False)
+            self.remote.run(["rm", "-f", self.timer_path], sudo=True)
+            self.remote.run(["systemctl", "daemon-reload"], sudo=True)
+        elif not previous.get("timer") and self.dep.timer:
+            self.remote.run(["systemctl", "disable", unit_name(self.dep)], sudo=True, check=False)
+        old_proxy = previous.get("proxy")
+        desired_proxy = nginx_name(self.dep) if self.dep.http_proxy else None
+        if isinstance(old_proxy, str) and old_proxy != desired_proxy:
+            available = f"/etc/nginx/sites-available/{old_proxy}"
+            enabled = f"/etc/nginx/sites-enabled/{old_proxy}"
+            self.remote.run(["rm", "-f", enabled, available], sudo=True)
+            self.remote.run(["nginx", "-t"], sudo=True)
+            self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
 
     def _prune_releases(self, previous: str) -> None:
         releases_path = f"{self.base}/releases"
@@ -355,10 +404,11 @@ class Reconciler:
         if self.dep.privileged and not allow_privileged:
             raise ConfigError("privileged deployment removal requires --allow-privileged")
         actions: list[Action] = []
-        if self.dep.timer and self.remote.exists(str(self.timer_path), sudo=True):
+        managed = self.managed_resources()
+        if (managed.get("timer") or self.dep.timer) and self.remote.exists(self.timer_path, sudo=True):
             actions.append(Action("REMOVE", "systemd timer"))
             self.remote.run(["systemctl", "disable", "--now", timer_name(self.dep)], sudo=True, check=False)
-            self.remote.run(["rm", "-f", str(self.timer_path)], sudo=True)
+            self.remote.run(["rm", "-f", self.timer_path], sudo=True)
         if self.remote.exists(self.unit_path, sudo=True):
             actions.append(Action("REMOVE", "systemd unit"))
             self.remote.run(["systemctl", "disable", "--now", unit_name(self.dep)], sudo=True, check=False)
@@ -368,12 +418,15 @@ class Reconciler:
         if self.remote.exists(self.env_path, sudo=True):
             actions.append(Action("REMOVE", "environment file"))
             self.remote.run(["rm", "-f", self.env_path], sudo=True)
-        if self.dep.http_proxy and (self.remote.exists(str(self.proxy_available), sudo=True) or
-                                    self.remote.exists(str(self.proxy_enabled), sudo=True)):
-            actions.append(Action("REMOVE", f"HTTP proxy {self.dep.http_proxy.domain}"))
-            self.remote.run(["rm", "-f", str(self.proxy_enabled), str(self.proxy_available)], sudo=True)
+        proxy = managed.get("proxy") or (nginx_name(self.dep) if self.dep.http_proxy else None)
+        if isinstance(proxy, str):
+            available, enabled = f"/etc/nginx/sites-available/{proxy}", f"/etc/nginx/sites-enabled/{proxy}"
+            actions.append(Action("REMOVE", f"HTTP proxy {proxy}"))
+            self.remote.run(["rm", "-f", enabled, available], sudo=True)
             self.remote.run(["nginx", "-t"], sudo=True)
             self.remote.run(["systemctl", "reload", "nginx"], sudo=True)
+        if self.remote.exists(self.state_path, sudo=True):
+            self.remote.run(["rm", "-f", self.state_path], sudo=True)
         # The active and rollback releases, writable storage, and service users are retained.
         return actions
 

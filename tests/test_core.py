@@ -12,14 +12,18 @@ from vps_deployer.nginx import render_proxy
 
 
 class RecordingRemote:
-    def __init__(self):
+    def __init__(self, files=None):
         self.calls = []
+        self.files = files or {}
 
     def run(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
 
     def write_file(self, path, content, mode, owner, group):
         self.calls.append((["write_file", path, content, mode, owner, group], {}))
+
+    def read(self, path, sudo=False):
+        return self.files.get(path)
 
 
 def deployment(tmp_path: Path) -> Deployment:
@@ -326,6 +330,31 @@ def test_failed_first_activation_stops_service_and_removes_new_configuration(tmp
     assert ["rm", "-f", reconciler.env_path] in commands
     assert ["rm", "-f", reconciler.unit_path] in commands
     assert commands[-1] == ["systemctl", "daemon-reload"]
+
+
+def test_obsolete_timer_and_proxy_are_reconciled_from_persisted_state(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "same")
+    reconciler._reconcile_obsolete_resources({"timer": True, "proxy": "old-proxy"})
+    commands = [call[0] for call in remote.calls]
+    assert ["systemctl", "disable", "--now", "vps-deployer-demo-prod.timer"] in commands
+    assert ["rm", "-f", reconciler.timer_path] in commands
+    assert ["rm", "-f", "/etc/nginx/sites-enabled/old-proxy",
+            "/etc/nginx/sites-available/old-proxy"] in commands
+
+
+def test_managed_resource_metadata_is_strictly_parsed(tmp_path):
+    from vps_deployer.deployment import Reconciler
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse({"name": "prod", "ssh": {"host": "prod"}}, "test")
+    remote = RecordingRemote(); reconciler = Reconciler(repo, dep, remote, "same")
+    remote.files[reconciler.state_path] = '{"timer":true,"proxy":"demo"}\n'
+    assert reconciler.managed_resources() == {"timer": True, "proxy": "demo"}
+    remote.files[reconciler.state_path] = '{"timer":"yes"}\n'
+    with pytest.raises(ConfigError, match="managed resource metadata"):
+        reconciler.managed_resources()
 
 
 @pytest.mark.parametrize(("name", "kind"), [
