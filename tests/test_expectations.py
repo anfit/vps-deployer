@@ -81,6 +81,22 @@ def test_proxy_uses_privileged_read_only_nginx_validation(tmp_path):
     assert ["nginx", "-t"] in remote.calls
 
 
+def test_tls_proxy_implicitly_requires_certificate_and_key(tmp_path):
+    source = tmp_path / "app"; source.mkdir()
+    certificate = "/etc/letsencrypt/live/demo.test/fullchain.pem"
+    key = "/etc/letsencrypt/live/demo.test/privkey.pem"
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(source)},
+                            "http_proxy": {"domain": "demo.test",
+                                           "upstream": "http://127.0.0.1:5100",
+                                           "certificate": certificate, "certificate_key": key}},
+                           tmp_path / "demo.yaml")
+    remote = ExpectationRemote(commands={"nginx", "systemctl", "tar"}, paths={certificate})
+    results = evaluate_expectations(dep, remote)
+    assert next(result for result in results if result.subject == f"path {certificate}").ok
+    assert not next(result for result in results if result.subject == f"path {key}").ok
+
+
 def test_expectation_failures_are_aggregated(tmp_path):
     dep = manifest(tmp_path, {"commands": {"python3": {"version": ">=3.12"}},
                               "paths": ["/etc/example/cert.pem"], "architecture": "aarch64"})

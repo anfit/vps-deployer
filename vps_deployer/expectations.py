@@ -71,7 +71,11 @@ def evaluate_expectations(deployment: Deployment, remote: RemoteHost) -> list[Ex
         results.append(ExpectationResult(f"command {command}", ok,
                                          f"version {rendered} {'satisfies' if ok else 'does not satisfy'} {constraint}"))
 
-    for path in deployment.expectations.paths:
+    expected_paths = set(deployment.expectations.paths)
+    if deployment.http_proxy and deployment.http_proxy.tls:
+        expected_paths.update((str(deployment.http_proxy.certificate),
+                               str(deployment.http_proxy.certificate_key)))
+    for path in sorted(expected_paths):
         exists = remote.expected_path_exists(path)
         results.append(ExpectationResult(f"path {path}", exists,
                                          "exists" if exists else "missing"))

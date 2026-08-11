@@ -10,8 +10,10 @@ from vps_deployer.config import Repository
 from vps_deployer.deployment import (application_build_properties, content_hash,
                                      env_file, env_matches, git_metadata,
                                      parse_build_properties, render_build_properties,
-                                     releases_to_prune, select_rollback, validate_archive)
+                                     Reconciler, release_id, releases_to_prune, select_rollback,
+                                     validate_archive)
 from vps_deployer.models import ConfigError, Deployment, Host
+from vps_deployer.remote import RemoteError, Result
 from vps_deployer.systemd import render_timer, render_unit, timer_name, unit_name
 from vps_deployer.nginx import render_proxy
 
@@ -48,7 +50,8 @@ class RecordingRemote:
 
 def deployment(tmp_path: Path) -> Deployment:
     artifact = tmp_path / "artifact"
-    artifact.mkdir(); (artifact / "app").write_text("hello")
+    executable = artifact / "app" / "bin" / "demo"
+    executable.parent.mkdir(parents=True); executable.write_text("#!/bin/sh\n")
     return Deployment.parse({
         "name": "demo-prod", "host": "prod", "service": {"user": "svc-demo"},
         "release": {"source": str(artifact)},
@@ -69,6 +72,99 @@ def test_runtime_defaults_to_application_contract(tmp_path):
     dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
                             "release": {"source": "x"}}, tmp_path / "d.yaml")
     assert dep.command == "./.deployer/run.sh"
+
+
+def test_release_id_rejects_missing_runtime_entrypoint(tmp_path):
+    source = tmp_path / "app"; source.mkdir()
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(source)}}, tmp_path / "d.yaml")
+    with pytest.raises(ConfigError, match="runtime executable is missing"):
+        release_id(dep)
+
+
+def test_release_id_accepts_runtime_entrypoint_from_release_include(tmp_path):
+    source = tmp_path / "app"; source.mkdir()
+    executable = tmp_path / "run.sh"; executable.write_text("#!/bin/sh\n")
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(source), "include": [
+                                {"source": str(executable), "target": ".deployer/run.sh"}]}},
+                           tmp_path / "d.yaml")
+    assert len(release_id(dep)) == 16
+
+
+def test_release_id_checks_runtime_entrypoint_inside_tar(tmp_path):
+    source = tmp_path / "source"; source.mkdir(); (source / "app.py").write_text("pass\n")
+    archive = tmp_path / "release.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(source / "app.py", arcname="app.py")
+    dep = Deployment.parse({"name": "demo", "host": "prod", "service": {"user": "svc-demo"},
+                            "release": {"source": str(archive)}}, tmp_path / "d.yaml")
+    with pytest.raises(ConfigError, match="runtime executable is missing"):
+        release_id(dep)
+
+
+class ReleaseInstallRemote(RecordingRemote):
+    def __init__(self, release_path, fail_chmod=False):
+        super().__init__()
+        self.release_path = release_path
+        self.fail_chmod = fail_chmod
+
+    def exists(self, path, sudo=False):
+        return path == self.release_path
+
+    def upload(self, local, remote):
+        self.calls.append((["upload", str(local), remote], {}))
+
+    def run(self, argv, **kwargs):
+        self.calls.append((argv, kwargs))
+        if self.fail_chmod and argv[:2] == ["chmod", "0750"]:
+            raise RemoteError("simulated chmod failure")
+        return Result("", "", 0)
+
+
+def test_release_install_replaces_incomplete_directory_and_marks_completion(tmp_path):
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse(
+        {"name": "prod", "ssh": {"host": "prod"}}, "test")
+    reconciler = Reconciler(repo, dep, ReleaseInstallRemote("unused"), "new")
+    remote = ReleaseInstallRemote(reconciler.release_path); reconciler.remote = remote
+    reconciler._install_release()
+    commands = [call[0] for call in remote.calls]
+    assert ["rm", "-rf", reconciler.release_path] in commands
+    assert ["write_file", reconciler.complete_path, b"new\n", "0640", "root", dep.user] in commands
+    assert commands[-1][:2] == ["rm", "-f"]
+
+
+def test_failed_release_install_never_writes_completion_marker(tmp_path):
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse(
+        {"name": "prod", "ssh": {"host": "prod"}}, "test")
+    reconciler = Reconciler(repo, dep, ReleaseInstallRemote("unused"), "new")
+    remote = ReleaseInstallRemote(reconciler.release_path, fail_chmod=True); reconciler.remote = remote
+    with pytest.raises(RemoteError, match="simulated chmod failure"):
+        reconciler._install_release()
+    commands = [call[0] for call in remote.calls]
+    assert not any(call[:2] == ["write_file", reconciler.complete_path] for call in commands)
+    assert commands[-1][:2] == ["rm", "-f"]
+
+
+def test_healthy_active_legacy_release_can_adopt_completion_marker(tmp_path):
+    dep = deployment(tmp_path)
+    repo = Repository(tmp_path); repo.hosts["prod"] = Host.parse(
+        {"name": "prod", "ssh": {"host": "prod"}}, "test")
+
+    class LegacyRemote(RecordingRemote):
+        def run(self, argv, **kwargs):
+            self.calls.append((argv, kwargs))
+            if argv[0] == "readlink":
+                return Result("releases/new\n", "", 0)
+            if argv[:2] == ["systemctl", "is-active"]:
+                return Result("active\n", "", 0)
+            return Result("", "", 1)
+
+    remote = LegacyRemote(); reconciler = Reconciler(repo, dep, remote, "new")
+    remote.files[f"{reconciler.release_path}/build.properties"] = "deployment.release=new\n"
+    assert reconciler._legacy_release_adoptable()
 
 
 @pytest.mark.parametrize(("field", "value"), [

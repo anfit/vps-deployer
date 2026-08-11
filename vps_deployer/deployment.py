@@ -154,12 +154,40 @@ def _ignored(root: Path, path: Path) -> bool:
 
 
 def release_id(dep: Deployment, explicit: str | None = None) -> str:
+    validate_runtime_entrypoint(dep)
     if explicit:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", explicit):
             raise ConfigError("invalid release id")
         return explicit
     # Source-state-addressed defaults make repeated apply operations idempotent.
     return content_hash(dep.source, dep.includes)
+
+
+def runtime_entrypoint(dep: Deployment) -> PurePosixPath:
+    executable = shlex.split(dep.command)[0][2:]
+    base = PurePosixPath() if dep.working_directory == "." else PurePosixPath(dep.working_directory)
+    return base / executable
+
+
+def validate_runtime_entrypoint(dep: Deployment) -> None:
+    entrypoint = runtime_entrypoint(dep)
+    if dep.source.is_dir():
+        local = dep.source.joinpath(*entrypoint.parts)
+        included = any(PurePosixPath(include.target) == entrypoint for include in dep.includes)
+        if (not local.is_file() or _ignored(dep.source, local)) and not included:
+            raise ConfigError(f"runtime executable is missing from release: {entrypoint}")
+        return
+    if dep.includes:
+        raise ConfigError("release includes require a directory artifact source")
+    validate_archive(dep.source)
+    try:
+        with tarfile.open(dep.source, "r:gz") as archive:
+            matches = [member for member in archive.getmembers()
+                       if PurePosixPath(member.name) == entrypoint and member.isfile()]
+    except (tarfile.TarError, OSError) as exc:
+        raise ConfigError(f"invalid release archive: {dep.source}") from exc
+    if len(matches) != 1:
+        raise ConfigError(f"runtime executable is missing from release: {entrypoint}")
 
 
 def validate_archive(path: Path) -> None:
@@ -207,6 +235,7 @@ class Reconciler:
         self.host: Host = repo.hosts[dep.host]
         self.base = f"{self.host.managed_root}/{dep.name}"
         self.release_path = f"{self.base}/releases/{release}"
+        self.complete_path = f"{self.release_path}/.release-complete"
         self.unit_path = f"/etc/systemd/system/{unit_name(dep)}"
         self.timer_path = f"/etc/systemd/system/{timer_name(dep)}"
         self.env_path = f"/etc/vps-deployer/{dep.name}.env"
@@ -241,7 +270,12 @@ class Reconciler:
         if self.dep.http_proxy and (self.remote.read(str(self.proxy_available), sudo=True) != render_proxy(self.dep) or
                                     not self.remote.exists(str(self.proxy_enabled), sudo=True)):
             actions.append(Action("UPDATE", f"HTTP proxy {self.dep.http_proxy.domain}"))
-        if not self.remote.exists(self.release_path, sudo=True):
+        complete = self.remote.exists(self.complete_path, sudo=True)
+        if not complete and self._legacy_release_adoptable():
+            actions.append(Action("FINALIZE", f"release {self.release} completion marker"))
+        elif not complete:
+            if self.active_release() == self.release:
+                raise ConfigError(f"{self.dep.name}: active release {self.release} is incomplete and unhealthy")
             actions.append(Action("INSTALL", f"release {self.release}"))
         active = self.active_release()
         if active != self.release:
@@ -341,8 +375,10 @@ class Reconciler:
             self.remote.run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", self.dep.user], sudo=True)
         for store in self.dep.storage:
             self.remote.run(["install", "-d", "-o", self.dep.user, "-g", self.dep.user, "-m", "0750", store.path], sudo=True)
-        new_release = not self.remote.exists(self.release_path, sudo=True)
-        if new_release:
+        complete = self.remote.exists(self.complete_path, sudo=True)
+        if not complete and self._legacy_release_adoptable():
+            self._write_privileged(self.complete_path, f"{self.release}\n", "0640", f"root:{self.dep.user}")
+        elif not complete:
             self._install_release()
         old_env = self.remote.read(self.env_path, sudo=True)
         old_unit = self.remote.read(self.unit_path, sudo=True)
@@ -501,6 +537,8 @@ class Reconciler:
         try:
             validate_archive(archive)
             self.remote.upload(archive, upload)
+            if self.remote.exists(self.release_path, sudo=True):
+                self.remote.run(["rm", "-rf", self.release_path], sudo=True)
             self.remote.run(["mkdir", "-p", self.release_path], sudo=True)
             self.remote.run(["tar", "-xzf", upload, "-C", self.release_path], sudo=True)
             self.remote.run(["chown", "-R", f"root:{self.dep.user}", self.release_path], sudo=True)
@@ -514,9 +552,25 @@ class Reconciler:
             if self.dep.working_directory != ".":
                 executable = f"{self.dep.working_directory}/{executable}"
             self.remote.run(["chmod", "0750", f"{self.release_path}/{executable}"], sudo=True)
-            self.remote.run(["rm", "-f", upload])
+            self._write_privileged(self.complete_path, f"{self.release}\n", "0640", f"root:{self.dep.user}")
         finally:
+            self.remote.run(["rm", "-f", upload], check=False)
             if cleanup: cleanup.unlink(missing_ok=True)
+
+    def _legacy_release_adoptable(self) -> bool:
+        if self.remote.exists(self.complete_path, sudo=True) or self.active_release() != self.release:
+            return False
+        content = self.remote.read(f"{self.release_path}/build.properties", sudo=True)
+        if content is None:
+            return False
+        try:
+            manifest = parse_build_properties(content, "release build.properties")
+        except ConfigError:
+            return False
+        if manifest.get("deployment.release") != self.release:
+            return False
+        service = self.remote.run(["systemctl", "is-active", self.supervisor_name], sudo=True, check=False)
+        return service.returncode == 0 and self._healthy()
 
     def release_manifest(self) -> dict[str, str]:
         content = self.remote.read(f"{self.base}/current/build.properties", sudo=True)

@@ -7,6 +7,7 @@ name = "vps-deployer"
 dynamic = ["version"]
 description = "Manage isolated systemd deployments on existing VPS hosts over SSH"
 readme = "README.md"
+license = "BUSL-1.1"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
 classifiers = [

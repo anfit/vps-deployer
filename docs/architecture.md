@@ -81,9 +81,17 @@ For unversioned artifacts, commit fields are omitted and the branch is
 `deployment.commit`.
 A running service with a missing or stale manifest is reported unhealthy.
 
+Release installation finishes by writing a root-owned `.release-complete` marker
+only after extraction, ownership, permissions, provenance, and runtime entrypoint
+setup succeed. Directory existence alone never makes a release installable. An
+inactive directory without the marker is removed and rebuilt on the next apply.
+For migration, a healthy active release with matching provenance can receive the
+marker without reinstallation; an incomplete unhealthy active release is rejected
+for explicit operator recovery rather than deleted under a running service.
+
 ## Apply and rollback
 
-An apply uploads a new release only when its release ID is absent. It writes the
+An apply uploads a new release only when its completion marker is absent. It writes the
 environment and unit, activates the new symlink, restarts the service, and runs
 the health check. If activation fails, the former environment, service and timer
 units are restored along with `current` before the previous service is restarted.

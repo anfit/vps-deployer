@@ -132,8 +132,9 @@ when `.deployer/ignore.txt` is absent.
 
 `command` defaults to `./.deployer/run.sh`. An explicit command supports named
 application entrypoints such as `./.deployer/bootstrap.sh`. It must begin with `./`
-and resolve inside the release. The executable is
-made runnable during installation. `working_directory` is release-relative.
+and resolve inside the release. The entrypoint must exist in the local directory
+or tar artifact (including release overlays) before any host operation begins. It
+is made runnable during installation. `working_directory` is release-relative.
 `restart` accepts `always`, `on-failure`, or `no`.
 
 Applications should keep runtime dependencies rollback-safe. Prefer dependencies
@@ -176,4 +177,5 @@ that the timer unit is active instead.
 
 The proxy manages one nginx site with HTTP and HTTPS listeners. Upstreams must
 use `http://127.0.0.1:<port>`. Certificates must already exist on the host.
-Certificate issuance and renewal remain host-level responsibilities.
+TLS certificate and key paths are implicit host expectations. Certificate
+issuance and renewal remain host-level responsibilities.

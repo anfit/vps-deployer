@@ -30,8 +30,7 @@ Infrastructure-specific assumptions live in the deployment manifest:
 ```yaml
 expect:
   paths:
-    - /etc/letsencrypt/live/example.org/fullchain.pem
-    - /etc/letsencrypt/live/example.org/privkey.pem
+    - /etc/example-service/model.dat
 ```
 
 The contracts are merged. Duplicate command or architecture declarations must
@@ -50,8 +49,9 @@ agree; conflicts are configuration errors. Paths are combined.
 
 Every deployment also implicitly expects `systemctl` and `tar`; HTTP health checks
 add `curl`, and nginx proxies perform the existing privileged, read-only `nginx -t`
-validation. These deployer prerequisites do not need to be repeated in application
-or infrastructure contracts.
+validation. A TLS-enabled proxy also expects its declared certificate and private
+key paths to exist. These known prerequisites do not need to be repeated in
+application or infrastructure contracts.
 
 Use `vps-deployer check DEPLOYMENT` to display the complete host contract. `plan`
 and `apply` enforce the same checks; a failure occurs before deployment files,

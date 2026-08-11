@@ -62,6 +62,11 @@ Source-state-addressed IDs are safer for ordinary deployments. Automatic IDs use
 16 hexadecimal characters; upgrading from older clients creates one new release
 because the former default used seven characters.
 
+The first apply with release-completion markers may report `FINALIZE` for an
+already active release. The deployer adopts it only when its provenance matches
+and its service is healthy. Inactive incomplete release directories are rebuilt;
+an incomplete unhealthy active release stops with an error for explicit recovery.
+
 ## Logs
 
 ```powershell

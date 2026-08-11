@@ -32,6 +32,23 @@ the application runtime stays Linux-native while the deployment lifecycle is
 managed. Compared with Ansible, vps-deployer owns application releases rather
 than general machine state.
 
+## Installation
+
+Python 3.10 or newer and an OpenSSH client are required on the operator machine.
+Install from a checkout into an isolated environment:
+
+```console
+git clone https://github.com/anfit/vps-deployer.git
+cd vps-deployer
+python -m venv .venv
+.venv/Scripts/python -m pip install .
+.venv/Scripts/vps-deployer --version
+```
+
+On Linux or macOS, use `.venv/bin/python` and `.venv/bin/vps-deployer`.
+The target host requirements are checked by `host inspect` and deployment
+expectations; see the operations guide before onboarding a host.
+
 Detailed documentation:
 
 - [`docs/build-properties.md`](docs/build-properties.md) — application-visible build and deployment provenance contract.
@@ -172,3 +189,11 @@ version and explicit migration documentation.
 The client and server-side SSH gate are one security-sensitive protocol pair.
 When release notes identify a gate protocol change, install the matching gate
 before using the new client against a restricted-key host.
+
+## License
+
+The complete `vps-deployer` codebase, including versions from project inception,
+is licensed by Jan Chimiak under the [Business Source License 1.1](LICENSE).
+Production use is permitted except for paid hosted or embedded competitive
+offerings. Each version converts to MPL 2.0 four years after its first public
+distribution.
