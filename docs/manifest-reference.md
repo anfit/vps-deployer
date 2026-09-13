@@ -175,10 +175,12 @@ that the timer unit is active instead.
 
 ### HTTP proxy
 
-The proxy manages one nginx site with HTTP and HTTPS listeners. Upstreams must
-use `http://127.0.0.1:<port>`. Certificates must already exist on the host.
-TLS certificate and key paths are implicit host expectations. Certificate
-issuance and renewal remain host-level responsibilities.
+The proxy manages one nginx site with HTTP and HTTPS listeners. For a TLS-enabled
+route, port 80 returns a permanent `308` redirect to the declared domain over
+HTTPS; port 443 proxies to the upstream. HTTP-only routes proxy directly on port
+80. Upstreams must use `http://127.0.0.1:<port>`. Certificates must already exist
+on the host. TLS certificate and key paths are implicit host expectations.
+Certificate issuance and renewal remain host-level responsibilities.
 
 ## Command deployments
 

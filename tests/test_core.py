@@ -293,6 +293,8 @@ def test_http_proxy_is_rendered_per_deployment(tmp_path):
     assert "server_name dev.example.test;" in rendered
     assert "proxy_pass http://127.0.0.1:5101;" in rendered
     assert "ssl_certificate /etc/ssl/dev/fullchain.pem;" in rendered
+    assert "return 308 https://dev.example.test$request_uri;" in rendered
+    assert rendered.index("return 308") < rendered.index("proxy_pass")
 
 
 def test_http_only_proxy_omits_tls_server(tmp_path):
@@ -305,6 +307,7 @@ def test_http_only_proxy_omits_tls_server(tmp_path):
     }, tmp_path / "dev.yaml")
     rendered = render_proxy(dep)
     assert "listen 80;" in rendered
+    assert "return 308" not in rendered
     assert "listen 443 ssl;" not in rendered
     assert "ssl_certificate" not in rendered
 

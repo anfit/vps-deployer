@@ -20,6 +20,12 @@ def render_proxy(deployment: Deployment) -> str:
     http = f"""server {{
     listen 80;
     server_name {proxy.domain};
+    return 308 https://{proxy.domain}$request_uri;
+}}
+
+""" if proxy.tls else f"""server {{
+    listen 80;
+    server_name {proxy.domain};
     location / {{
         proxy_pass {proxy.upstream};
 {headers}
