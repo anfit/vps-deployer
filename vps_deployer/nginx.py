@@ -17,6 +17,11 @@ def render_proxy(deployment: Deployment) -> str:
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;"""
+    if proxy.websocket:
+        headers += """
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";"""
     http = f"""server {{
     listen 80;
     server_name {proxy.domain};

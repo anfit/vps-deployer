@@ -129,6 +129,7 @@ class HttpProxy:
     tls: bool
     certificate: str | None
     certificate_key: str | None
+    websocket: bool = False
 
 
 @dataclass(frozen=True)
@@ -323,6 +324,9 @@ class Deployment:
             tls = proxy_data.get("tls", True)
             if not isinstance(tls, bool):
                 raise ConfigError(f"{source_name}: http_proxy.tls must be boolean")
+            websocket = proxy_data.get("websocket", False)
+            if not isinstance(websocket, bool):
+                raise ConfigError(f"{source_name}: http_proxy.websocket must be boolean")
             if tls:
                 certificate = safe_absolute(str(_required(proxy_data, "certificate", source_name)), source_name)
                 certificate_key = safe_absolute(str(_required(proxy_data, "certificate_key", source_name)), source_name)
@@ -330,7 +334,7 @@ class Deployment:
                 if proxy_data.get("certificate") or proxy_data.get("certificate_key"):
                     raise ConfigError(f"{source_name}: HTTP-only proxy must not declare certificates")
                 certificate = certificate_key = None
-            proxy = HttpProxy(proxy_name, domain, upstream, tls, certificate, certificate_key)
+            proxy = HttpProxy(proxy_name, domain, upstream, tls, certificate, certificate_key, websocket)
         timer_data = data.get("timer")
         timer = None
         if timer_data is not None:

@@ -312,6 +312,20 @@ def test_http_only_proxy_omits_tls_server(tmp_path):
     assert "ssl_certificate" not in rendered
 
 
+def test_websocket_proxy_emits_upgrade_headers(tmp_path):
+    artifact = tmp_path / "artifact"; artifact.mkdir()
+    dep = Deployment.parse({
+        "name": "demo-ws", "host": "prod", "service": {"user": "svc-demo"},
+        "release": {"source": str(artifact)}, "runtime": {"command": "./run.sh"},
+        "http_proxy": {"domain": "ws.example.test", "upstream": "http://127.0.0.1:8100",
+                       "tls": False, "websocket": True},
+    }, tmp_path / "ws.yaml")
+    rendered = render_proxy(dep)
+    assert "proxy_http_version 1.1;" in rendered
+    assert 'proxy_set_header Upgrade $http_upgrade;' in rendered
+    assert 'proxy_set_header Connection "upgrade";' in rendered
+
+
 def test_http_only_proxy_rejects_certificate_fields(tmp_path):
     artifact = tmp_path / "artifact"; artifact.mkdir()
     with pytest.raises(ConfigError, match="must not declare certificates"):
