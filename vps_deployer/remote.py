@@ -39,7 +39,7 @@ class RemoteHost:
 
     def ssh_argv(self, argv: list[str], sudo: bool = False) -> list[str]:
         direct_root = sudo and self.host.ssh.privileged_host is not None
-        remote = ([] if direct_root else (["sudo", "--"] if sudo else [])) + argv
+        remote = ([] if direct_root else (["sudo", "-n", "--"] if sudo else [])) + argv
         if direct_root:
             request = self._privileged_request(argv)
             payload = base64.urlsafe_b64encode(json.dumps(request, separators=(",", ":")).encode()).decode()

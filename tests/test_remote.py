@@ -8,7 +8,7 @@ def test_ssh_uses_config_target_and_quotes_arguments():
     host = Host.parse({"name": "prod", "ssh": {"host": "alias", "user": "deploy"}}, "test")
     argv = RemoteHost(host).ssh_argv(["test", "-e", "/path with space"], sudo=True)
     assert argv[:5] == ["ssh", "-o", "BatchMode=yes", "--", "deploy@alias"]
-    assert argv[-1] == "sudo -- test -e '/path with space'"
+    assert argv[-1] == "sudo -n -- test -e '/path with space'"
 
 
 def test_privileged_host_uses_direct_root_transport():
