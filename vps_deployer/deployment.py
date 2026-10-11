@@ -420,11 +420,11 @@ class Reconciler:
         if previous != self.release:
             self.remote.run(["ln", "-sfn", f"releases/{self.release}", f"{self.base}/current"], sudo=True)
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
-            if not self._healthy():
+            if not self._activation_healthy():
                 self._fail_activation(previous, old_env, old_unit, old_timer, old_supervisor)
         elif old_env != new_env or units_changed:
             self.remote.run(["systemctl", "restart", self.supervisor_name], sudo=True)
-            if not self._healthy():
+            if not self._activation_healthy():
                 self._restore_configuration(old_env, old_unit, old_timer)
                 if old_supervisor is None:
                     raise RuntimeError("previous configuration has no supervisor")
@@ -606,7 +606,7 @@ class Reconciler:
         if self.dep.executable:
             return self.remote.read(str(self.executable_path), sudo=True) == self.executable_wrapper()
         service = self.remote.run(["systemctl", "is-active", self.supervisor_name], sudo=True, check=False)
-        return service.returncode == 0 and self._healthy()
+        return service.returncode == 0 and self._activation_healthy()
 
     def release_manifest(self) -> dict[str, str]:
         content = self.remote.read(f"{self.base}/current/build.properties", sudo=True)
@@ -642,6 +642,19 @@ class Reconciler:
             raise ConfigError("only http health checks are supported")
         return self.remote.run(["curl", "--fail", "--silent", "--show-error", "--max-time", "10",
                                 "--retry", "5", "--retry-delay", "2", "--retry-connrefused", str(hc["url"])], check=False).returncode == 0
+
+    def _activation_healthy(self) -> bool:
+        """Check whether the newly activated supervisor is installed and running.
+
+        A timer's associated oneshot service can retain the exit status from an
+        earlier invocation across deployments. That historical result is useful
+        for status reporting, but must not make a correctly activated timer roll
+        back before it has had another chance to run.
+        """
+        if self.dep.timer:
+            return self.remote.run(["systemctl", "is-active", "--quiet", timer_name(self.dep)],
+                                   sudo=True, check=False).returncode == 0
+        return self._healthy()
 
     def remove(self, allow_privileged: bool = False) -> list[Action]:
         if self.dep.privileged and not allow_privileged:

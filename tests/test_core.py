@@ -266,9 +266,10 @@ def test_timer_health_includes_last_job_result(tmp_path):
     class TimerRemote(RecordingRemote):
         result = "success"
         exit_status = "0"
+        active = True
         def run(self, argv, **kwargs):
             if argv[:2] == ["systemctl", "is-active"]:
-                return Result("active\n", "", 0)
+                return Result("active\n" if self.active else "inactive\n", "", 0 if self.active else 3)
             if argv[:2] == ["systemctl", "show"]:
                 return Result(f"Result={self.result}\nExecMainStatus={self.exit_status}\n"
                               "ExecMainExitTimestamp=Tue 2026-08-11 08:00:00 UTC\n", "", 0)
@@ -277,6 +278,12 @@ def test_timer_health_includes_last_job_result(tmp_path):
     assert reconciler._healthy()
     remote.result = "exit-code"; remote.exit_status = "1"
     assert not reconciler._healthy()
+    # The previous oneshot failure remains visible to `status`, but the timer
+    # itself is active, so deployment activation must not roll back on that
+    # stale invocation result.
+    assert reconciler._activation_healthy()
+    remote.active = False
+    assert not reconciler._activation_healthy()
 
 
 def test_http_proxy_is_rendered_per_deployment(tmp_path):
