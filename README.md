@@ -62,7 +62,7 @@ Python 3.10 or newer and an OpenSSH client are required on the operator machine.
 The simplest install is an isolated tool environment:
 
 ```console
-pipx install git+https://github.com/anfit/vps-deployer
+pipx install vps-deployer
 vps-deployer --version
 ```
 
