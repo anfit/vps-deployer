@@ -27,7 +27,7 @@ deployer=vps-deployer         # or "$VPS_DEPLOYER_DIR/.venv/bin/vps-deployer"
   is normally required after changing persistent Windows User variables.
 
 When a host uses `privileged_host`, its dedicated key must use the current
-`tools/vps-deployer-ssh-gate` as a forced command. Pass `--managed-root` and one
+the packaged `vps-deployer-ssh-gate` (`vps_deployer/data/`; `vps-deployer host bootstrap HOST` prints or installs it) as a forced command. Pass `--managed-root` and one
 `--storage PATH` for every storage path assigned to deployments using that key.
 The gate protocol is versioned by its `vps-deployer-op` command prefix; update
 the server-side script and authorized-key policy together with client changes.
@@ -41,6 +41,18 @@ the server-side script and authorized-key policy together with client changes.
 & $deployer --repo $infra host inspect prod
 & $deployer --repo $infra host onboard prod
 ```
+
+```powershell
+& $deployer --repo $infra host bootstrap prod            # print gate setup and authorized_keys line
+& $deployer --repo $infra host bootstrap prod --install  # also copy the gate over sudo SSH
+```
+
+`host bootstrap` derives the `--managed-root` and `--storage` flags from the host
+and the manifests that target it. `host inspect` reports the gate protocol
+(`gate: ok|mismatch|outdated|none`) and exits 1 on a mismatch, so an out-of-date
+gate is found before `apply` fails.
+
+After a manual `rollback`, `plan` marks the pending `ACTIVATE` as reversing it.
 
 `inspect` is read-only. `onboard` creates the managed root and deployer
 configuration directory. Run onboarding once per host or after repairing host

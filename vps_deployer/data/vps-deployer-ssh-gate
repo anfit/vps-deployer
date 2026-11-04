@@ -13,6 +13,9 @@ import sys
 import tempfile
 import unicodedata
 
+# Bump when the client/gate wire protocol changes incompatibly.
+GATE_PROTOCOL = 1
+
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 SAFE_RELEASE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -271,6 +274,9 @@ def main() -> None:
     if not match:
         raise ValueError("interactive access is disabled")
     request = json.loads(base64.urlsafe_b64decode(match.group(1)))
+    if request.get("operation") == "gate-version":
+        sys.stdout.write(f"vps-deployer-gate {GATE_PROTOCOL}\n")
+        return
     argv = build_argv(request, policy.managed_root, storage)
     if argv[0] == "__write_file__":
         write_file(argv)

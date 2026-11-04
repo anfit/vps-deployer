@@ -7,7 +7,7 @@ from vps_deployer.models import Deployment
 from vps_deployer.systemd import render_timer, render_unit, timer_name, unit_name
 
 
-GATE = runpy.run_path(str(Path(__file__).parents[1] / "tools" / "vps-deployer-ssh-gate"))
+GATE = runpy.run_path(str(Path(__file__).parents[1] / "vps_deployer" / "data" / "vps-deployer-ssh-gate"))
 build_argv = GATE["build_argv"]
 validate_unit = GATE["validate_unit"]
 ROOT = "/srv/custom"

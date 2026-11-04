@@ -29,6 +29,9 @@ vps-deployer = "vps_deployer.cli:main"
 [tool.setuptools.dynamic]
 version = {attr = "vps_deployer.__version__"}
 
+[tool.setuptools.package-data]
+vps_deployer = ["data/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

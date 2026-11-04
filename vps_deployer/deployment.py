@@ -292,7 +292,7 @@ class Reconciler:
             actions.append(Action("INSTALL", f"release {self.release}"))
         active = self.active_release()
         if active != self.release:
-            actions.append(Action("ACTIVATE", f"release {self.release}"))
+            actions.append(self._activate_action(active))
             if not self.dep.executable:
                 actions.append(Action("RESTART", "timer" if self.dep.timer else "service"))
         elif not self.dep.executable and (env_changed or unit_changed or timer_changed):
@@ -320,6 +320,13 @@ class Reconciler:
                 (state.get("executable") is not None and not isinstance(state.get("executable"), str))):
             raise ConfigError(f"{self.dep.name}: invalid managed resource metadata")
         return {"timer": state["timer"], "proxy": state.get("proxy"), "executable": state.get("executable")}
+
+    def _activate_action(self, active: str | None) -> Action:
+        """ACTIVATE action; flags the case where it undoes a manual rollback."""
+        note = ""
+        if self.previous_release() == self.release:
+            note = f" (reverses a manual rollback; {active} is active because of it)"
+        return Action("ACTIVATE", f"release {self.release}{note}")
 
     def active_release(self) -> str | None:
         result = self.remote.run(["readlink", f"{self.base}/current"], sudo=True, check=False)

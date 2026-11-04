@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 from pathlib import Path
 import sys
 
 from . import __version__
+from . import bootstrap
 from .config import Repository
 from .deployment import Reconciler, git_metadata, release_id, select_rollback
 from .models import ConfigError
@@ -30,6 +32,9 @@ def parser() -> argparse.ArgumentParser:
     ss.add_parser("check", help="list unset secret variables by name").add_argument("deployment", nargs="?")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
+    hb = hs.add_parser("bootstrap", help="print (or --install) the gate setup for a host")
+    hb.add_argument("host"); hb.add_argument("--install", action="store_true",
+                                             help="copy the gate to the host over sudo SSH and onboard it")
     ini = sub.add_parser("init", help="scaffold an infra repository, or `init app` for an application")
     ini.add_argument("target", nargs="*", help="[DIR] or: app [DIR]")
     doc = sub.add_parser("doctor", help="offline preflight of an application's .deployer contract")
@@ -201,6 +206,16 @@ def run(args) -> int:
     if args.command == "host":
         if args.host not in repo.hosts: raise ConfigError(f"unknown host: {args.host}")
         host = repo.hosts[args.host]; remote = RemoteHost(host, args.verbose)
+        if args.host_command == "bootstrap":
+            storage = bootstrap.storage_paths(repo, host.name)
+            print(bootstrap.render_instructions(host, storage))
+            if args.install:
+                sudo_host = dataclasses.replace(host, ssh=dataclasses.replace(host.ssh, privileged_host=None))
+                direct = RemoteHost(sudo_host, args.verbose)
+                direct.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
+                direct.write_file(bootstrap.GATE_INSTALL_PATH, bootstrap.gate_source(), "0755", "root", "root")
+                print(f"\nInstalled {bootstrap.GATE_INSTALL_PATH} and onboarded {host.name}")
+            return 0
         if args.host_command == "inspect":
             checks = [(["uname", "-s"], "linux"), (["uname", "-m"], "architecture"),
                       (["systemctl", "--version"], "systemd"),
@@ -210,7 +225,9 @@ def run(args) -> int:
                 result = remote.run(argv, check=False); print(f"{label}: {result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout else 'unavailable'}")
             privilege = remote.run(["test", "-e", host.managed_root], sudo=True, check=False)
             print(f"privileged access: {'available' if privilege.returncode in (0, 1) else 'unavailable'}")
-            print(f"managed root: {'present' if remote.exists(host.managed_root, True) else 'absent'}"); return 0
+            print(f"managed root: {'present' if remote.exists(host.managed_root, True) else 'absent'}")
+            state, detail = remote.gate_status(); print(f"gate: {state} ({detail})")
+            return 1 if state in ("mismatch", "outdated") else 0
         remote.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
         print(f"Onboarded {host.name}"); return 0
     dep = _dep(repo, args.deployment); remote = _remote(repo, dep, args.verbose)

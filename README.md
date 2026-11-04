@@ -214,7 +214,7 @@ removal.
 
 Hosts may set `ssh.privileged_host`, `ssh.privileged_user`, and
 `ssh.privileged_identity_file` to route privileged operations through a separate
-SSH identity. Use `tools/vps-deployer-ssh-gate` as that key's server-side forced
+SSH identity. Use the packaged `vps-deployer-ssh-gate` (`vps_deployer/data/`; `vps-deployer host bootstrap HOST` prints or installs it) as that key's server-side forced
 command so it cannot open an interactive root shell. The forced command must
 declare the host's managed root and each storage path assigned to this key:
 

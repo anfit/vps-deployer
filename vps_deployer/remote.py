@@ -19,6 +19,10 @@ class Result:
     returncode: int
 
 
+# Must match GATE_PROTOCOL in data/vps-deployer-ssh-gate.
+GATE_PROTOCOL = 1
+
+
 class RemoteError(RuntimeError):
     pass
 
@@ -68,10 +72,24 @@ class RemoteHost:
             "remove-executable": "remove-executable",
             "expect-path": "expect-path",
             "hold-lock": "hold-lock",
+            "gate-version": "gate-version",
         }.get(command)
         if not operation:
             raise RemoteError(f"no privileged operation for command: {command}")
         return {"operation": operation, "arguments": argv[1:]}
+
+    def gate_status(self) -> tuple[str, str]:
+        """Return (state, detail); state is ok, mismatch, outdated, or none."""
+        if self.host.ssh.privileged_host is None:
+            return "none", "no privileged gate configured (sudo mode)"
+        result = self.run(["gate-version"], sudo=True, check=False)
+        match = re.fullmatch(r"vps-deployer-gate (\d+)", result.stdout.strip()) if result.returncode == 0 else None
+        if not match:
+            return "outdated", "gate does not report a version; reinstall it (vps-deployer host bootstrap)"
+        version = int(match.group(1))
+        if version != GATE_PROTOCOL:
+            return "mismatch", f"gate protocol {version}, client expects {GATE_PROTOCOL}; reinstall the gate"
+        return "ok", f"protocol {version}"
 
     def write_file(self, path: str, content: bytes, mode: str, owner: str, group: str) -> None:
         if self.host.ssh.privileged_host is not None:
