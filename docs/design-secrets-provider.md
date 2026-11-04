@@ -1,6 +1,12 @@
 # Design note: secrets providers
 
-Status: proposed. No behavior change to existing manifests.
+Status: implemented in 1.4.0 (`vps_deployer/secret_sources.py`; see docs/operations.md,
+"Secret sources"). The shipped design differs from the proposal below in two ways: sources
+are chosen with `VPS_DEPLOYER_SECRET_SOURCES` instead of a repository-level file (secrets
+are per operator, not per repository), and the default chain is `env,file`, where the file
+is used only if it exists, so setups without it behave exactly as before.
+
+No behavior change to existing manifests.
 
 ## Problem
 Secrets resolve only from process environment variables (`secrets.<KEY>.from_env`).

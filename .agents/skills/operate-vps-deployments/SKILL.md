@@ -27,11 +27,11 @@ Resolve repositories through `PROJECTS_DIR`, `VPS_DEPLOYER_DIR`, and `SERVICE_IN
 
 ## Overview
 
-For "what is deployed and is it healthy?" use `vps-deployer list` (offline inventory) and `vps-deployer status --all` (one health row per deployment, needs SSH). `plan --all --exit-code` reports whether any deployment has pending changes. The tool finds the infrastructure repository through `SERVICE_INFRA_DIR`; pass `--repo` only to override.
+For "what is deployed and is it healthy?" use `vps-deployer list` (offline inventory) and `vps-deployer status --all` (state and drift per deployment, needs SSH). `plan --all --exit-code` reports whether any deployment has pending changes. The tool finds the infrastructure repository through `SERVICE_INFRA_DIR`; pass `--repo` only to override.
 
 ## Plan, apply, and verify
 
-1. Run `vps-deployer validate`, then `vps-deployer secrets check DEPLOYMENT`. The latter lists unset secret variables by name only; resolve them before planning. If the application checkout changed, run `vps-deployer doctor <application checkout>`.
+1. Run `vps-deployer validate`, then `vps-deployer secrets check DEPLOYMENT`. The latter lists unset secret variables by name only; resolve them before planning (`vps-deployer secrets sources` shows whether each comes from the environment, the user secrets file, or the OS credential store, and `secrets set NAME` stores one without printing it). If the application checkout changed, run `vps-deployer doctor <application checkout>`.
 2. Run `plan DEPLOYMENT` and review identity, source, routes, storage, and privileged operations.
 3. Run `apply DEPLOYMENT`. Add `--allow-privileged` only for a manifest explicitly declaring a privileged service.
 4. Run `status DEPLOYMENT`.

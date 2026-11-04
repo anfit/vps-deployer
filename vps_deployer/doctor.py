@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from .deployment import _ignored, validate_runtime_entrypoint
+from .deployment import validate_runtime_entrypoint, walk_release_files
 from .models import ConfigError, parse_expectations
 
 OK, WARN, ERROR = "ok", "warn", "error"
@@ -62,9 +62,7 @@ def _check_ignore(app: Path) -> list[Finding]:
 
 def _check_included_files(app: Path) -> list[Finding]:
     included, suspicious = 0, []
-    for path in app.rglob("*"):
-        if not path.is_file() or _ignored(app, path):
-            continue
+    for path in walk_release_files(app):
         included += 1
         if included > SCAN_LIMIT:
             return [Finding(WARN, "release contents", f"more than {SCAN_LIMIT} files; scan skipped")]

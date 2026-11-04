@@ -30,6 +30,11 @@ def parser() -> argparse.ArgumentParser:
     sec = sub.add_parser("secrets", help="inspect secret environment references")
     ss = sec.add_subparsers(dest="secrets_command", required=True)
     ss.add_parser("check", help="list unset secret variables by name").add_argument("deployment", nargs="?")
+    ssrc = ss.add_parser("sources", help="show which source supplies each secret (names only)")
+    ssrc.add_argument("deployment", nargs="?")
+    sset = ss.add_parser("set", help="store a secret value in the user secrets file or OS credential store")
+    sset.add_argument("name"); sset.add_argument("--store", choices=("file", "keyring"), default="file")
+    sset.add_argument("--stdin", action="store_true", help="read the value from standard input")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
     hb = hs.add_parser("bootstrap", help="print (or --install) the gate setup for a host")
@@ -46,6 +51,8 @@ def parser() -> argparse.ArgumentParser:
         if name in ("plan", "status"):
             cmd.add_argument("deployment", nargs="?")
             cmd.add_argument("--all", action="store_true", help="every deployment")
+            cmd.add_argument("--jobs", type=int, default=4, metavar="N",
+                             help="with --all: deployments queried in parallel (default 4)")
         else:
             cmd.add_argument("deployment")
         if name == "plan":
@@ -77,6 +84,32 @@ def _repo(args) -> Repository:
 def _missing_secrets_message(dep, missing) -> str:
     names = ", ".join(sorted({name for _, name in missing}))
     return f"{dep.name}: secret environment variables not set: {names}"
+
+
+def _secrets_set(args) -> int:
+    import getpass
+    from .secret_sources import SecretResolver
+    resolver = SecretResolver.from_environment()
+    value = sys.stdin.read().rstrip("\r\n") if args.stdin else getpass.getpass(f"Value for {args.name}: ")
+    if not value: raise ConfigError("empty value; nothing stored")
+    where = resolver.store(args.store, args.name, value)
+    print(f"Stored {args.name} in {where}")
+    if resolver.where(args.name) not in (args.store,):
+        print(f"note: {args.name} is currently supplied by {resolver.where(args.name)}, which takes precedence", file=sys.stderr)
+    return 0
+
+
+def _secrets_sources(repo, args) -> int:
+    resolver = repo.resolver()
+    print(f"sources (in order): {', '.join(resolver.sources)}")
+    targets = [_dep(repo, args.deployment)] if args.deployment else list(repo.deployments.values())
+    rows, unset = [], 0
+    for dep in targets:
+        for key, ref in sorted(dep.secrets.items()):
+            source = resolver.where(str(ref.from_env)); unset += source is None
+            rows.append((dep.name, str(ref.from_env), source or "UNSET"))
+    if rows: print(_table(("deployment", "variable", "source"), rows))
+    return 1 if unset else 0
 
 
 def _dep(repo, name):
@@ -128,8 +161,9 @@ def _status_info(repo, dep, remote) -> dict:
     metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
     desired_commit, _ = git_metadata(metadata_source, desired)
     manifest_ok = manifest.get("deployment.release") == desired and (not desired_commit or manifest.get("deployment.commit") == desired_commit)
-    healthy = (dep.executable is not None or service.returncode == 0) and rec._healthy() and manifest_ok
-    return dict(active=active, service=service, desired=desired, manifest=manifest,
+    running = (dep.executable is not None or service.returncode == 0) and rec._healthy()
+    healthy = running and manifest_ok
+    return dict(active=active, service=service, desired=desired, manifest=manifest, running=running,
                 desired_commit=desired_commit, manifest_ok=manifest_ok, healthy=healthy)
 
 
@@ -137,32 +171,46 @@ def _sorted_deployments(repo):
     return sorted(repo.deployments.values(), key=lambda d: (d.host, d.name))
 
 
+def _parallel(items, fn, jobs):
+    """Map fn over items with up to `jobs` threads; results keep input order."""
+    from concurrent.futures import ThreadPoolExecutor
+    from .deployment import hash_cache
+    with hash_cache(), ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        return list(pool.map(fn, items))
+
+
 def _status_all(repo, args) -> int:
-    rows, failed = [], False
-    for dep in _sorted_deployments(repo):
+    def one(dep):
         try:
             info = _status_info(repo, dep, _remote(repo, dep, args.verbose))
             commit = (info["manifest"].get("deployment.commit") or "-")[:8]
-            rows.append((dep.name, dep.host, _kind(dep), "healthy" if info["healthy"] else "unhealthy",
-                         str(info["active"] or "none")[:16], commit))
-            failed |= not info["healthy"]
+            state = "ok" if info["running"] else "down"
+            drift = "in sync" if info["manifest_ok"] else "deploy pending"
+            return ((dep.name, dep.host, _kind(dep), state, drift,
+                     str(info["active"] or "none")[:16], commit), not info["running"])
         except (ConfigError, RemoteError, RuntimeError) as exc:
-            rows.append((dep.name, dep.host, _kind(dep), "error", "-", str(exc).splitlines()[0][:60])); failed = True
-    print(_table(("deployment", "host", "kind", "health", "active release", "commit"), rows))
+            return ((dep.name, dep.host, _kind(dep), "error", "-", "-", str(exc).splitlines()[0][:60]), True)
+    results = _parallel(_sorted_deployments(repo), one, args.jobs)
+    rows = [row for row, _ in results]; failed = any(bad for _, bad in results)
+    print(_table(("deployment", "host", "kind", "state", "source", "active release", "commit"), rows))
     return 1 if failed else 0
 
 
 def _plan_all(repo, args) -> int:
-    changed = errors = 0
-    for dep in _sorted_deployments(repo):
-        print(f"== {dep.name} ({dep.host})")
+    def one(dep):
+        warning = None
         try:
             missing = repo.missing_secrets(dep)
-            if missing: print(f"warning: {_missing_secrets_message(dep, missing)}", file=sys.stderr)
+            if missing: warning = f"warning: {_missing_secrets_message(dep, missing)}"
             actions = Reconciler(repo, dep, _remote(repo, dep, args.verbose), release_id(dep, None)).plan(False)
-            print("\n".join(map(str, actions)) if actions else "No changes."); changed += bool(actions)
+            return dep, warning, "\n".join(map(str, actions)) if actions else "No changes.", bool(actions), False
         except (ConfigError, RemoteError, RuntimeError) as exc:
-            print(f"error: {exc}"); errors += 1
+            return dep, warning, f"error: {exc}", False, True
+    changed = errors = 0
+    for dep, warning, text, has_changes, failed in _parallel(_sorted_deployments(repo), one, args.jobs):
+        print(f"== {dep.name} ({dep.host})")
+        if warning: print(warning, file=sys.stderr)
+        print(text); changed += has_changes; errors += failed
     print(f"\n{len(repo.deployments)} deployment(s): {changed} with changes, {errors} error(s)")
     return 2 if errors else (1 if changed and args.exit_code else 0)
 
@@ -183,6 +231,8 @@ def run(args) -> int:
             print(f"{f.level.upper():5} {f.subject}: {f.detail}")
         errors = sum(f.level == ERROR for f in findings); warns = sum(f.level == WARN for f in findings)
         print(f"\n{errors} error(s), {warns} warning(s)"); return 1 if errors else 0
+    if args.command == "secrets" and args.secrets_command == "set":
+        return _secrets_set(args)
     repo = _repo(args)
     if args.command == "list":
         print(render_listing(repo, args.format)); return 0
@@ -193,6 +243,8 @@ def run(args) -> int:
     if args.command == "validate":
         if args.deployment: _dep(repo, args.deployment)
         print(f"Valid: {args.deployment or f'{len(repo.hosts)} host(s), {len(repo.deployments)} deployment(s)'}"); return 0
+    if args.command == "secrets" and args.secrets_command == "sources":
+        return _secrets_sources(repo, args)
     if args.command == "secrets":
         targets = [_dep(repo, args.deployment)] if args.deployment else list(repo.deployments.values())
         status = 0

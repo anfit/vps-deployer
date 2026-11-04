@@ -20,6 +20,9 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 
+[project.optional-dependencies]
+keyring = ["keyring>=24"]
+
 [project.urls]
 Repository = "https://github.com/anfit/vps-deployer"
 

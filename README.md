@@ -234,10 +234,14 @@ deployment's active release and allowlisted storage. A restricted-key host canno
 apply `service.privileged: true`; root services require a separately trusted sudo
 or host administration path.
 
-Secrets are accepted only through explicitly declared process-environment
-references and are never printed by planning or validation. `secrets check`
-lists unset variables by name (exit status 1 when any are missing); `apply`
-refuses to start with unset secrets, and `plan` warns that they are redacted.
+Secrets are accepted only through explicitly declared references
+(`secrets.<KEY>.from_env: NAME`) and are never printed by planning or validation.
+`NAME` is looked up in order in the process environment, then in a user-only
+secrets file, then (optionally) the OS credential store, and the first hit wins.
+The environment always comes first, so existing setups behave exactly as before.
+`secrets check` lists unset variables by name (exit status 1 when any are
+missing); `apply` refuses to start with unset secrets, and `plan` warns that they
+are redacted. See [operations](docs/operations.md#secret-sources).
 
 ## Versioning and compatibility
 

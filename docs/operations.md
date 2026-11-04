@@ -23,14 +23,42 @@ deployer=vps-deployer         # or "$VPS_DEPLOYER_DIR/.venv/bin/vps-deployer"
 - OpenSSH client with non-interactive access to each host.
 - Persistent User environment roots: `PROJECTS_DIR`, `VPS_DEPLOYER_DIR`, and
   `SERVICE_INFRA_DIR`.
-- Required deployment secrets in the current process environment. A new terminal
-  is normally required after changing persistent Windows User variables.
+- Required deployment secrets, from the process environment or another secret source
+  (see [Secret sources](#secret-sources)). A new terminal is normally required after
+  changing persistent Windows User variables.
 
 When a host uses `privileged_host`, its dedicated key must use the current
 the packaged `vps-deployer-ssh-gate` (`vps_deployer/data/`; `vps-deployer host bootstrap HOST` prints or installs it) as a forced command. Pass `--managed-root` and one
 `--storage PATH` for every storage path assigned to deployments using that key.
 The gate protocol is versioned by its `vps-deployer-op` command prefix; update
 the server-side script and authorized-key policy together with client changes.
+
+## Secret sources
+
+Manifests do not change: a secret still names a variable. Where that variable is
+found is a per-operator choice, so you do not need one persistent User variable per
+secret. Sources are tried in order and the first hit wins:
+
+| Source | Where | Notes |
+|---|---|---|
+| `env` | process environment | always first by default; the original behavior |
+| `file` | `NAME=value` file | default `%APPDATA%\vps-deployer\secrets.env` on Windows, `~/.config/vps-deployer/secrets.env` elsewhere; override with `VPS_DEPLOYER_SECRETS_FILE`. On POSIX the file must be mode 600 |
+| `keyring` | OS credential store | optional: `pipx inject vps-deployer keyring` |
+
+Set the order with `VPS_DEPLOYER_SECRET_SOURCES` (default `env,file`), for example
+`env,file,keyring`. Store and inspect secrets without printing values:
+
+```powershell
+& $deployer secrets set LIBRUS_SYNC_PROD_PASSWORD            # prompts; stores in the file
+& $deployer secrets set LIBRUS_SYNC_PROD_PASSWORD --store keyring
+Get-Content secret.txt | & $deployer secrets set NAME --stdin
+& $deployer secrets sources                                    # which source supplies each variable
+& $deployer secrets check
+```
+
+`secrets sources` exits 1 when any variable is unset. Because the environment wins,
+a stale environment variable overrides a newer file entry; `secrets set` warns when
+that is the case.
 
 ## Validate and inspect
 
@@ -81,9 +109,14 @@ application find their runtime entrypoint. Warnings do not fail the command.
 ```powershell
 & $deployer list                        # offline table of every deployment
 & $deployer list --format markdown      # includes storage and secret variable names
-& $deployer status --all                # one health row per deployment (needs SSH)
+& $deployer status --all                # one row per deployment (needs SSH); --jobs N sets parallelism
 & $deployer plan --all --exit-code      # exit 1 if any deployment has changes
 ```
+
+`status --all` reports `state` (`ok` when the service or timer is active and its health check passes,
+otherwise `down`) separately from `source` (`in sync`, or `deploy pending` when the local source differs
+from the active release). It exits 1 only when a deployment is down or cannot be queried; pending
+deploys are visible in the table and in `plan --all --exit-code`.
 
 `list` reads manifests only. A repository's `docs/services.md` can embed the
 markdown form between generated markers (see service-infra-template's

@@ -85,3 +85,33 @@ def test_bootstrap_install_failure_prints_manual_steps(monkeypatch, capsys):
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "scp" in err and "sudo install" in err and "password" in err
+
+
+def test_hash_cache_hashes_shared_source_once(tmp_path, monkeypatch):
+    from vps_deployer import deployment
+    (tmp_path / "f.txt").write_text("x")
+    calls = []
+    real = deployment._content_hash
+    monkeypatch.setattr(deployment, "_content_hash", lambda *a: calls.append(1) or real(*a))
+    deployment.content_hash(tmp_path); deployment.content_hash(tmp_path)
+    assert len(calls) == 2                       # no cache outside fleet commands
+    calls.clear()
+    with deployment.hash_cache():
+        deployment.content_hash(tmp_path); deployment.content_hash(tmp_path)
+    assert len(calls) == 1
+
+
+def test_parallel_keeps_input_order():
+    assert cli._parallel([3, 1, 2], lambda x: x * 10, 3) == [30, 10, 20]
+
+
+def test_walk_prunes_ignored_directories_without_changing_results(tmp_path):
+    from vps_deployer.deployment import _ignored, walk_release_files
+    (tmp_path / ".deployer").mkdir(); (tmp_path / ".deployer" / "ignore.txt").write_text("tmp/\n*.log\ndocs\n")
+    for rel in ("app/main.py", "tmp/a/b.txt", "docs/x.md", "run.log", "app/x.log", ".git/HEAD",
+                "node/.venv/lib.py", ".deployer/run.sh", "keep/a.txt"):
+        f = tmp_path / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_text("x")
+    expected = sorted(p for p in tmp_path.rglob("*") if p.is_file() and not _ignored(tmp_path, p))
+    assert sorted(walk_release_files(tmp_path)) == expected
+    names = {p.relative_to(tmp_path).as_posix() for p in expected}
+    assert names == {"app/main.py", ".deployer/ignore.txt", ".deployer/run.sh", "keep/a.txt"}

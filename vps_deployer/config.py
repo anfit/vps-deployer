@@ -5,6 +5,7 @@ import os
 import yaml
 
 from .models import ConfigError, Deployment, Host, safe_text
+from .secret_sources import SecretResolver
 
 
 class Repository:
@@ -13,6 +14,7 @@ class Repository:
         self.hosts: dict[str, Host] = {}
         self.deployments: dict[str, Deployment] = {}
         self.globals: dict[str, dict[str, str]] = {}
+        self.secret_resolver: SecretResolver | None = None   # tests may inject one
 
     @classmethod
     def load(cls, root: Path) -> "Repository":
@@ -72,25 +74,29 @@ class Repository:
             merged.update(values)
         return merged
 
-    @staticmethod
-    def missing_secrets(dep: Deployment) -> list[tuple[str, str]]:
-        """Return (secret key, environment variable name) pairs not set locally.
+    def resolver(self) -> SecretResolver:
+        return self.secret_resolver or SecretResolver.from_environment()
+
+    def missing_secrets(self, dep: Deployment) -> list[tuple[str, str]]:
+        """Return (secret key, variable name) pairs no secret source can supply.
 
         Only names are reported; values are never read into the result.
         """
+        resolver = self.resolver()
         return sorted((key, str(ref.from_env)) for key, ref in dep.secrets.items()
-                      if os.environ.get(str(ref.from_env)) is None)
+                      if resolver.lookup(str(ref.from_env)) is None)
 
     def resolve_environment(self, dep: Deployment, require_secrets: bool) -> tuple[dict[str, str], set[str]]:
         result: dict[str, str] = {}
         secret_keys: set[str] = set()
         globals_ = self._global_values(dep)
+        resolver = self.resolver()
         for key, ref in dep.environment.items():
             value = ref.literal if ref.literal is not None else globals_[str(ref.from_global)]
             result[key] = safe_text(value, f"{dep.name}: environment.{key}")
         for key, ref in dep.secrets.items():
             secret_keys.add(key)
-            value = os.environ.get(str(ref.from_env))
+            value = resolver.get(str(ref.from_env))
             if value is None:
                 if require_secrets:
                     raise ConfigError(f"{dep.name}: required secret environment variable is not set for {key}")

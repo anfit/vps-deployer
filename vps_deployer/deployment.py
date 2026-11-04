@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import shlex
 import shutil
@@ -110,11 +112,35 @@ def git_metadata(source: Path, release: str,
     return commit, render_build_properties({}, metadata)
 
 
+_HASH_CACHE: dict | None = None
+
+
+@contextmanager
+def hash_cache():
+    """Memoize content_hash for the duration of a fleet command (shared sources hash once)."""
+    global _HASH_CACHE
+    previous, _HASH_CACHE = _HASH_CACHE, {}
+    try:
+        yield
+    finally:
+        _HASH_CACHE = previous
+
+
 def content_hash(source: Path, includes=()) -> str:
+    cache = _HASH_CACHE
+    if cache is None:
+        return _content_hash(source, includes)
+    key = (str(source), tuple(sorted((i.target, str(i.source)) for i in includes)))
+    if key not in cache:
+        cache[key] = _content_hash(source, includes)
+    return cache[key]
+
+
+def _content_hash(source: Path, includes=()) -> str:
     if not source.exists():
         raise ConfigError(f"artifact does not exist: {source}")
     digest = hashlib.sha256()
-    paths = [source] if source.is_file() else sorted(p for p in source.rglob("*") if p.is_file() and not _ignored(source, p))
+    paths = [source] if source.is_file() else sorted(walk_release_files(source))
     for path in paths:
         if source.is_dir():
             digest.update(path.relative_to(source).as_posix().encode())
@@ -134,23 +160,60 @@ def content_hash(source: Path, includes=()) -> str:
     return digest.hexdigest()[:16]
 
 
-def _ignored(root: Path, path: Path) -> bool:
-    ignored = {".git", ".venv", ".idea", "__pycache__", ".pytest_cache", ".env", "config.yaml"}
-    relative = path.relative_to(root)
-    if any(part in ignored or "venv" in part.lower() or part.startswith(".test-") or
-           part.endswith((".egg-info", ".key", ".secret")) for part in relative.parts):
-        return True
+_ALWAYS_IGNORED = {".git", ".venv", ".idea", "__pycache__", ".pytest_cache", ".env", "config.yaml"}
+
+
+def _always_ignored(relative: Path) -> bool:
+    return any(part in _ALWAYS_IGNORED or "venv" in part.lower() or part.startswith(".test-") or
+               part.endswith((".egg-info", ".key", ".secret")) for part in relative.parts)
+
+
+def _ignore_patterns(root: Path) -> tuple[Path | None, list[str]]:
     ignore_file = root / ".deployer" / "ignore.txt"
     legacy_ignore = root / ".vps-deployer-ignore"
     if not ignore_file.is_file() and legacy_ignore.is_file():
         ignore_file = legacy_ignore
-    if ignore_file.is_file() and path != ignore_file:
-        patterns = (line.strip() for line in ignore_file.read_text(encoding="utf-8").splitlines())
-        return any(pattern and not pattern.startswith("#") and
-                   (fnmatch.fnmatch(relative.as_posix(), pattern) or
-                    fnmatch.fnmatch(relative.as_posix(), pattern.rstrip("/") + "/*"))
-                   for pattern in patterns)
+    if not ignore_file.is_file():
+        return None, []
+    lines = (line.strip() for line in ignore_file.read_text(encoding="utf-8").splitlines())
+    return ignore_file, [line for line in lines if line and not line.startswith("#")]
+
+
+def _ignored(root: Path, path: Path, patterns: tuple[Path | None, list[str]] | None = None) -> bool:
+    relative = path.relative_to(root)
+    if _always_ignored(relative):
+        return True
+    ignore_file, listed = patterns if patterns is not None else _ignore_patterns(root)
+    if ignore_file is not None and path != ignore_file:
+        text = relative.as_posix()
+        return any(fnmatch.fnmatch(text, pattern) or fnmatch.fnmatch(text, pattern.rstrip("/") + "/*")
+                   for pattern in listed)
     return False
+
+
+def walk_release_files(root: Path):
+    """Yield non-ignored files under root, pruning ignored directories during the walk.
+
+    A directory is pruned only when every descendant would be ignored anyway, so the
+    result equals filtering a full recursive listing with _ignored.
+    """
+    patterns = _ignore_patterns(root)
+    ignore_file, listed = patterns
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        kept = []
+        for name in sorted(dirnames):
+            relative = (base / name).relative_to(root)
+            text = relative.as_posix()
+            if _always_ignored(relative) or (
+                    ignore_file is not None and any(fnmatch.fnmatch(text, pattern.rstrip("/")) for pattern in listed)):
+                continue
+            kept.append(name)
+        dirnames[:] = kept
+        for name in sorted(filenames):
+            path = base / name
+            if not _ignored(root, path, patterns):
+                yield path
 
 
 def release_id(dep: Deployment, explicit: str | None = None) -> str:
