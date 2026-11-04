@@ -25,13 +25,14 @@ Resolve repositories through `PROJECTS_DIR`, `VPS_DEPLOYER_DIR`, and `SERVICE_IN
 
 ## Adapt the application
 
-- Provide a release-local executable entry point such as `run-managed.sh`.
+- Provide the release-local entry point `.deployer/run.sh` (for a new or bare application, `vps-deployer init app <dir>` writes the contract skeleton: `run.sh`, `ignore.txt`, `expect.yaml`, `.gitattributes`). Use a named entrypoint such as `.deployer/bootstrap.sh` only for a distinct lifecycle.
 - Keep virtual environments, caches, state, databases, and other writes in declared persistent storage, not immutable releases.
 - Read runtime configuration from committed files or environment variables. Move only actual secret values to environment-backed inputs.
 - Provide a stable loopback health endpoint that tests application readiness without DNS or TLS.
 - Add `.deployer/ignore.txt` for local credentials, helper files, build output, or other content that must not enter release hashes.
 - Enforce LF for deployed shell scripts, commonly with `.gitattributes`.
 - Add or update application tests for the managed startup path.
+- Run `vps-deployer doctor <application checkout>` and resolve every error; review each warning (CRLF scripts, credential-like files that would be uploaded, missing ignore file or LF rule).
 
 Reorganize the application when that produces a clean deployment boundary, but preserve unrelated behavior and user changes.
 
@@ -42,7 +43,8 @@ Reorganize the application when that produces a clean deployment boundary, but p
 - Commit ordinary environment-specific configuration directly or include it from `service-infra`.
 - Declare genuine secrets under `secrets` with `from_env`; never store their values in any repository.
 - Give each deployment a unique service identity, release name, port, storage, health URL, and proxy route.
-- Document the service, required User environment variable names, public URLs, and operational exceptions.
+- Document the service, required User environment variable names, public URLs, and operational exceptions. Add the variable names to `.env.example` and regenerate the inventory with `python tools/update-services-doc.py`.
+- If the change is generic rather than specific to this estate, mirror it in `service-infra-template` and run `tools/check-template-parity.py`.
 
 If the manifest model cannot express a legitimate reusable requirement, extend `vps-deployer` generically with tests and documentation. Do not add service-name conditionals.
 
@@ -51,7 +53,7 @@ If the manifest model cannot express a legitimate reusable requirement, extend `
 1. Validate all repositories and run focused tests.
 2. Arrange required Windows User secret variables without displaying their values. Request approval before copying secret material from a remote system.
 3. Inspect or onboard the host as needed.
-4. Review the deployment plan, then apply.
+4. Run `vps-deployer secrets check DEPLOYMENT`, review the deployment plan, then apply.
 5. Verify status, generated `build.properties`, loopback health, public routing, and a repeated no-op plan.
 6. Exercise application integration tests when the service contract requires them.
 7. Disable legacy deploy automation once the replacement path is verified and the user has included that migration in scope.

@@ -1,6 +1,6 @@
 ---
 name: operate-vps-deployments
-description: Operate services already managed by vps-deployer and service-infra. Use for host inspection or onboarding, deployment validation, plan, apply, status, logs, rollback, removal, release-manifest diagnosis, and verification of an existing deployment. Do not use for making a new application deployable; use onboard-vps-service instead.
+description: Operate services already managed by vps-deployer and service-infra. Use for host inspection or onboarding, fleet overview (list, status --all), deployment validation, secret preflight, plan, apply, status, logs, rollback, removal, release-manifest diagnosis, and verification of an existing deployment. Do not use for making a new application deployable; use onboard-vps-service instead.
 ---
 
 # Operate VPS Deployments
@@ -25,15 +25,20 @@ Resolve repositories through `PROJECTS_DIR`, `VPS_DEPLOYER_DIR`, and `SERVICE_IN
 - Treat `service-infra` manifests as desired state and the application repository as release content.
 - Load only secret names declared by the deployment from the Windows User environment into the current process. Never print, persist, diff, or commit secret values.
 
+## Overview
+
+For "what is deployed and is it healthy?" use `vps-deployer list` (offline inventory) and `vps-deployer status --all` (one health row per deployment, needs SSH). `plan --all --exit-code` reports whether any deployment has pending changes. The tool finds the infrastructure repository through `SERVICE_INFRA_DIR`; pass `--repo` only to override.
+
 ## Plan, apply, and verify
 
-1. Run `vps-deployer --repo $env:SERVICE_INFRA_DIR validate`.
+1. Run `vps-deployer validate`, then `vps-deployer secrets check DEPLOYMENT`. The latter lists unset secret variables by name only; resolve them before planning. If the application checkout changed, run `vps-deployer doctor <application checkout>`.
 2. Run `plan DEPLOYMENT` and review identity, source, routes, storage, and privileged operations.
 3. Run `apply DEPLOYMENT`. Add `--allow-privileged` only for a manifest explicitly declaring a privileged service.
 4. Run `status DEPLOYMENT`.
 5. Verify the loopback health check and any documented public URL.
 6. Confirm the active `build.properties` reports the desired release and exact Git commit.
 7. Run `plan DEPLOYMENT` again; a converged deployment must report `No changes.`
+8. If the deployment set changed, refresh the generated inventory with `python tools/update-services-doc.py` in `service-infra`.
 
 Report the deployment name, release ID, Git commit, service and health state, public check result, and final no-op result.
 

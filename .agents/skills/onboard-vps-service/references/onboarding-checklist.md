@@ -11,12 +11,13 @@
 
 ## Application readiness
 
-- Release-local executable startup command
+- `.deployer/run.sh` (or a named entrypoint) as the release-local startup command
 - Runtime writes redirected to persistent storage
 - LF shell scripts and executable entry point
 - Stable loopback health endpoint
 - Local-only content excluded with `.deployer/ignore.txt`
 - Managed-startup tests pass
+- `vps-deployer doctor` reports no errors and every warning is understood
 
 ## Desired state
 
@@ -25,11 +26,12 @@
 - Non-secrets committed; secrets declared only by environment-variable name
 - Unique port, storage, health URL, proxy name, and domain per environment
 - Existing certificates referenced, not issued by the deployment
-- Service and secret-variable documentation updated
+- Service and secret-variable documentation updated (`.env.example`, regenerated `docs/services.md`)
+- Generic changes mirrored in `service-infra-template`; parity check clean
 
 ## Cutover acceptance
 
-- `validate` succeeds
+- `validate` and `secrets check` succeed
 - Plan contains only intended changes
 - Apply succeeds without exposing secrets
 - `status` matches desired release and Git commit
