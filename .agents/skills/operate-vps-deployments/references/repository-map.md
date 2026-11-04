@@ -4,7 +4,7 @@ Use the persistent environment roots; do not infer repositories by walking paren
 
 | Variable | Repository | Responsibility |
 | --- | --- | --- |
-| `VPS_DEPLOYER_DIR` | `vps-deployer` | CLI implementation, generic deployment behavior, tests, and operator mechanics |
+| `VPS_DEPLOYER_DIR` | `vps-deployer` source checkout | Documentation, the bundled example, and development of the CLI. Operating deployments uses the installed tool (`pipx install vps-deployer`), not this checkout |
 | `SERVICE_INFRA_DIR` | `service-infra` | Hosts, deployment manifests, committed non-secret configuration, and estate documentation |
 | `PROJECTS_DIR` | parent of application repositories | Application source used to build releases |
 | `SERVICE_INFRA_TEMPLATE_DIR` | `service-infra-template` | Public, generic starting point for infra repositories. Generic changes to `service-infra` (docs, tooling, layout) are mirrored here in the same working session; check with `tools/check-template-parity.py` |

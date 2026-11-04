@@ -64,6 +64,7 @@ The simplest install is an isolated tool environment:
 ```console
 pipx install vps-deployer
 vps-deployer --version
+pipx upgrade vps-deployer      # later
 ```
 
 To work from a checkout instead (for development):
@@ -80,8 +81,9 @@ expectations; see the operations guide before onboarding a host.
 
 ## Quick start
 
-The bundled example validates offline, with no host required. It needs one
-variable pointing at your checkout:
+The bundled example validates offline, with no host required. It lives in the
+source repository and is not part of the pip package, so clone the repository
+first and point one variable at the clone:
 
 ```console
 export VPS_DEPLOYER_DIR=$PWD            # PowerShell: $env:VPS_DEPLOYER_DIR = $PWD.Path
