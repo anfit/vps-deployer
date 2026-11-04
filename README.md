@@ -59,19 +59,39 @@ than general machine state.
 ## Installation
 
 Python 3.10 or newer and an OpenSSH client are required on the operator machine.
-Install from a checkout into an isolated environment:
+The simplest install is an isolated tool environment:
+
+```console
+pipx install git+https://github.com/anfit/vps-deployer
+vps-deployer --version
+```
+
+To work from a checkout instead (for development):
 
 ```console
 git clone https://github.com/anfit/vps-deployer.git
 cd vps-deployer
 python -m venv .venv
-.venv/Scripts/python -m pip install .
-.venv/Scripts/vps-deployer --version
+.venv/Scripts/python -m pip install .   # Linux/macOS: .venv/bin/python
 ```
 
-On Linux or macOS, use `.venv/bin/python` and `.venv/bin/vps-deployer`.
 The target host requirements are checked by `host inspect` and deployment
 expectations; see the operations guide before onboarding a host.
+
+## Quick start
+
+The bundled example validates offline, with no host required. It needs one
+variable pointing at your checkout:
+
+```console
+export VPS_DEPLOYER_DIR=$PWD            # PowerShell: $env:VPS_DEPLOYER_DIR = $PWD.Path
+vps-deployer --repo ./examples validate
+vps-deployer --repo ./examples secrets check     # reports unset secret variables by name
+```
+
+`plan`, `apply`, and `status` connect to the host in `examples/hosts/prod.yaml`
+(an SSH alias you must replace). To start your own infrastructure repository,
+use [service-infra-template](https://github.com/anfit/service-infra-template).
 
 Detailed documentation:
 
@@ -156,6 +176,7 @@ release directories are pruned. Failed deployments do not trigger cleanup.
 ```console
 vps-deployer --version
 vps-deployer validate
+vps-deployer secrets check [DEPLOYMENT]
 vps-deployer check DEPLOYMENT
 vps-deployer host inspect HOST
 vps-deployer host onboard HOST
@@ -167,7 +188,9 @@ vps-deployer rollback DEPLOYMENT
 vps-deployer remove DEPLOYMENT
 ```
 
-Run from the infra repository, or select it explicitly:
+The infrastructure repository is chosen in this order: `--repo`, the current
+directory when it contains `hosts/` and `deployments/`, `$VPS_DEPLOYER_REPO`,
+then `$SERVICE_INFRA_DIR`. Examples:
 
 ```console
 vps-deployer --repo ./examples validate
@@ -200,7 +223,9 @@ apply `service.privileged: true`; root services require a separately trusted sud
 or host administration path.
 
 Secrets are accepted only through explicitly declared process-environment
-references and are never printed by planning or validation.
+references and are never printed by planning or validation. `secrets check`
+lists unset variables by name (exit status 1 when any are missing); `apply`
+refuses to start with unset secrets, and `plan` warns that they are redacted.
 
 ## Versioning and compatibility
 

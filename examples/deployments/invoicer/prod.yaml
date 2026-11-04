@@ -5,12 +5,10 @@ service:
   user: svc-invoicer
 
 release:
-  source: ${PROJECTS_DIR}/vps-deployer/examples/artifacts/invoicer.tar.gz
+  source: ${VPS_DEPLOYER_DIR}/examples/artifacts/invoicer
 
 runtime:
-  command: ./bin/invoicer
-  working_directory: app
-  restart: always
+  restart: always   # command defaults to the application's .deployer/run.sh
 
 healthcheck:
   type: http

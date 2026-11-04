@@ -72,6 +72,15 @@ class Repository:
             merged.update(values)
         return merged
 
+    @staticmethod
+    def missing_secrets(dep: Deployment) -> list[tuple[str, str]]:
+        """Return (secret key, environment variable name) pairs not set locally.
+
+        Only names are reported; values are never read into the result.
+        """
+        return sorted((key, str(ref.from_env)) for key, ref in dep.secrets.items()
+                      if os.environ.get(str(ref.from_env)) is None)
+
     def resolve_environment(self, dep: Deployment, require_secrets: bool) -> tuple[dict[str, str], set[str]]:
         result: dict[str, str] = {}
         secret_keys: set[str] = set()

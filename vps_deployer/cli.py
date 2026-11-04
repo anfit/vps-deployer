@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -16,10 +17,15 @@ from .expectations import evaluate_expectations
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="vps-deployer")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    p.add_argument("--repo", type=Path, default=Path.cwd(), help="infra repository root")
+    p.add_argument("--repo", type=Path, default=None,
+                   help="infra repository root (default: current directory if it holds hosts/ and "
+                        "deployments/, else $VPS_DEPLOYER_REPO, else $SERVICE_INFRA_DIR)")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True)
     val = sub.add_parser("validate"); val.add_argument("deployment", nargs="?")
+    sec = sub.add_parser("secrets", help="inspect secret environment references")
+    ss = sec.add_subparsers(dest="secrets_command", required=True)
+    ss.add_parser("check", help="list unset secret variables by name").add_argument("deployment", nargs="?")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
     for name in ("check", "plan", "apply", "status", "logs", "rollback", "remove"):
@@ -33,8 +39,24 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def resolve_repo_path(explicit: Path | None, cwd: Path | None = None, environ=None) -> Path:
+    """Pick the infra repository: --repo, then cwd if it looks like one, then environment."""
+    if explicit is not None: return explicit
+    environ = os.environ if environ is None else environ
+    cwd = Path.cwd() if cwd is None else cwd
+    if (cwd / "hosts").is_dir() and (cwd / "deployments").is_dir(): return cwd
+    for name in ("VPS_DEPLOYER_REPO", "SERVICE_INFRA_DIR"):
+        if environ.get(name): return Path(environ[name])
+    return cwd
+
+
 def _repo(args) -> Repository:
-    return Repository.load(args.repo)
+    return Repository.load(resolve_repo_path(args.repo))
+
+
+def _missing_secrets_message(dep, missing) -> str:
+    names = ", ".join(sorted({name for _, name in missing}))
+    return f"{dep.name}: secret environment variables not set: {names}"
 
 
 def _dep(repo, name):
@@ -50,6 +72,16 @@ def run(args) -> int:
     if args.command == "validate":
         if args.deployment: _dep(repo, args.deployment)
         print(f"Valid: {args.deployment or f'{len(repo.hosts)} host(s), {len(repo.deployments)} deployment(s)'}"); return 0
+    if args.command == "secrets":
+        targets = [_dep(repo, args.deployment)] if args.deployment else list(repo.deployments.values())
+        status = 0
+        for dep in targets:
+            missing = repo.missing_secrets(dep)
+            if missing:
+                status = 1; print(_missing_secrets_message(dep, missing))
+            elif dep.secrets:
+                print(f"{dep.name}: all {len(dep.secrets)} secret variable(s) set")
+        return status
     if args.command == "host":
         if args.host not in repo.hosts: raise ConfigError(f"unknown host: {args.host}")
         host = repo.hosts[args.host]; remote = RemoteHost(host, args.verbose)
@@ -79,6 +111,9 @@ def run(args) -> int:
         print("\n".join(map(str, actions)) if actions else "No changes.")
         return 0
     if args.command in {"plan", "apply"}:
+        missing = repo.missing_secrets(dep)
+        if missing and args.command == "apply": raise ConfigError(_missing_secrets_message(dep, missing))
+        if missing: print(f"warning: {_missing_secrets_message(dep, missing)}; plan shows them as redacted", file=sys.stderr)
         rid = release_id(dep, args.release_id); reconciler = Reconciler(repo, dep, remote, rid)
         if args.command == "plan":
             actions = reconciler.plan(False)

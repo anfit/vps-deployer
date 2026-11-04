@@ -1,10 +1,20 @@
 # Operations
 
-Examples use PowerShell and an explicit infrastructure repository.
+Examples use PowerShell and an explicit infrastructure repository. With the
+tool installed on PATH (for example via `pipx`) and `SERVICE_INFRA_DIR` set,
+`--repo` may be omitted entirely.
 
 ```powershell
 $infra = $env:SERVICE_INFRA_DIR
-$deployer = Join-Path $env:VPS_DEPLOYER_DIR '.venv\Scripts\vps-deployer.exe'
+$deployer = 'vps-deployer'    # or a checkout: Join-Path $env:VPS_DEPLOYER_DIR '.venv\Scripts\vps-deployer.exe'
+```
+
+POSIX equivalent:
+
+```bash
+infra="$SERVICE_INFRA_DIR"
+deployer=vps-deployer         # or "$VPS_DEPLOYER_DIR/.venv/bin/vps-deployer"
+"$deployer" --repo "$infra" validate
 ```
 
 ## Local prerequisites
@@ -26,6 +36,7 @@ the server-side script and authorized-key policy together with client changes.
 
 ```powershell
 & $deployer --repo $infra validate
+& $deployer --repo $infra secrets check
 & $deployer --repo $infra check example-prod
 & $deployer --repo $infra host inspect prod
 & $deployer --repo $infra host onboard prod
@@ -146,6 +157,12 @@ release remains active after a successful automatic rollback.
 The active release predates generic manifest support or was modified outside the
 deployer. Apply the deployment again to install a generated manifest. Do not edit
 release contents in place.
+
+### apply: "secret environment variables not set"
+
+Run `secrets check DEPLOYMENT` to list the missing variable names. A terminal
+opened before a persistent variable was set will not see it; open a new one or
+copy the User value into the process.
 
 ### Plan repeatedly updates environment
 
