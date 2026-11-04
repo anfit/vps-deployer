@@ -150,3 +150,57 @@ def test_sources_exit_code_reports_unset(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("INVOICER_PROD_DATABASE_URL", raising=False)
     assert run_cli(["--repo", str(root / "examples"), "secrets", "sources"]) == 1
     assert "UNSET" in capsys.readouterr().out
+
+
+def test_remove_and_holders(tmp_path):
+    path = secrets_file(tmp_path, "# keep\nA=1\nexport B=2\nC=3\n")
+    resolver = SecretResolver(("env", "file"), {"A": "env"}, path)
+    assert resolver.holders("A") == ["env", "file"]
+    assert resolver.file_names() == ["A", "B", "C"]
+    assert resolver.remove("file", "B") is True
+    assert resolver.remove("file", "B") is False
+    assert parse_secrets_file(path.read_text(), "f") == {"A": "1", "C": "3"}
+    assert "# keep" in path.read_text()
+    assert resolver.remove("file", "A") and resolver.remove("file", "C")
+    assert path.read_text().strip() == "# keep"
+    assert SecretResolver(("file",), {}, tmp_path / "none.env").remove("file", "X") is False
+
+
+def test_keyring_remove_with_fake_module(monkeypatch):
+    class PasswordDeleteError(Exception): pass
+    class Fake:
+        store = {("vps-deployer", "T"): "k"}
+        @classmethod
+        def get_password(cls, service, name): return cls.store.get((service, name))
+        @classmethod
+        def delete_password(cls, service, name):
+            if (service, name) not in cls.store: raise PasswordDeleteError()
+            del cls.store[(service, name)]
+    monkeypatch.setitem(__import__("sys").modules, "keyring", Fake)
+    resolver = SecretResolver(("keyring",), {})
+    assert resolver.holders("T") == ["keyring"]
+    assert resolver.remove("keyring", "T") is True
+    assert resolver.remove("keyring", "T") is False
+
+
+def test_list_unset_and_rotate_commands(tmp_path, monkeypatch, capsys):
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("VPS_DEPLOYER_DIR", str(root))
+    monkeypatch.setenv("VPS_DEPLOYER_SECRETS_FILE", str(tmp_path / "secrets.env"))
+    monkeypatch.delenv("INVOICER_PROD_DATABASE_URL", raising=False)
+    repo = ["--repo", str(root / "examples")]
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("v1\n"))
+    assert run_cli([*repo, "secrets", "rotate", "INVOICER_PROD_DATABASE_URL", "--stdin"]) == 0
+    out = capsys.readouterr().out
+    assert "invoicer-prod" in out and "v1" not in out
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("x\n"))
+    run_cli(["secrets", "set", "STRAY_ONE", "--stdin"]); capsys.readouterr()
+    assert run_cli([*repo, "secrets", "list"]) == 0
+    listing = capsys.readouterr().out
+    assert "INVOICER_PROD_DATABASE_URL" in listing and "file" in listing and "STRAY_ONE" in listing
+    assert "v1" not in listing
+    assert run_cli([*repo, "secrets", "unset", "INVOICER_PROD_DATABASE_URL"]) == 0
+    captured = capsys.readouterr()
+    assert "invoicer-prod" in captured.err
+    assert run_cli([*repo, "secrets", "unset", "INVOICER_PROD_DATABASE_URL"]) == 1
+    assert run_cli([*repo, "secrets", "list"]) == 1

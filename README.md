@@ -241,7 +241,8 @@ secrets file, then (optionally) the OS credential store, and the first hit wins.
 The environment always comes first, so existing setups behave exactly as before.
 `secrets check` lists unset variables by name (exit status 1 when any are
 missing); `apply` refuses to start with unset secrets, and `plan` warns that they
-are redacted. See [operations](docs/operations.md#secret-sources).
+are redacted. `secrets list`, `secrets rotate` and `secrets unset` manage stored values over time. See
+[operations](docs/operations.md#secret-sources).
 
 ## Versioning and compatibility
 

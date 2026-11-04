@@ -31,7 +31,7 @@ For "what is deployed and is it healthy?" use `vps-deployer list` (offline inven
 
 ## Plan, apply, and verify
 
-1. Run `vps-deployer validate`, then `vps-deployer secrets check DEPLOYMENT`. The latter lists unset secret variables by name only; resolve them before planning (`vps-deployer secrets sources` shows whether each comes from the environment, the user secrets file, or the OS credential store, and `secrets set NAME` stores one without printing it). If the application checkout changed, run `vps-deployer doctor <application checkout>`.
+1. Run `vps-deployer validate`, then `vps-deployer secrets check DEPLOYMENT`. The latter lists unset secret variables by name only; resolve them before planning (`vps-deployer secrets sources` shows whether each comes from the environment, the user secrets file, or the OS credential store, and `secrets set NAME` stores one without printing it; `secrets list` shows every source holding each variable and leftover file entries, `secrets rotate NAME` stores a new value and names the deployments to re-apply, `secrets unset NAME` deletes a stored one). If the application checkout changed, run `vps-deployer doctor <application checkout>`.
 2. Run `plan DEPLOYMENT` and review identity, source, routes, storage, and privileged operations.
 3. Run `apply DEPLOYMENT`. Add `--allow-privileged` only for a manifest explicitly declaring a privileged service.
 4. Run `status DEPLOYMENT`.

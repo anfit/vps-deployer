@@ -60,6 +60,53 @@ Get-Content secret.txt | & $deployer secrets set NAME --stdin
 a stale environment variable overrides a newer file entry; `secrets set` warns when
 that is the case.
 
+### Managing stored secrets
+
+Storing is only half the job. These commands cover the rest of the lifecycle; none
+prints a value.
+
+```powershell
+& $deployer secrets list                     # every source holding each variable, who uses it
+& $deployer secrets list invoicer-prod       # one deployment
+& $deployer secrets rotate NAME              # new value, then which deployments need an apply
+& $deployer secrets rotate NAME --store keyring
+& $deployer secrets unset NAME               # delete from the file (default)
+& $deployer secrets unset NAME --store keyring
+```
+
+- **`list`** shows all sources that hold a variable, not only the winning one, so it
+  exposes shadowed or duplicated copies. Without a deployment name it also lists
+  names in the secrets file that no deployment references (leftovers). It exits 1
+  when a referenced variable is unset.
+- **`rotate`** is `set` plus a reminder: it names the deployments in the current
+  repository that reference the variable. They keep running the old value until you
+  `apply` them, and `plan` does not show secret values, so `rotate` is the prompt to do it.
+- **`unset`** removes a value from one store, exits 1 if it was not there, and warns
+  if another source still supplies it or if deployments are left without it.
+
+**Where entries live and how to inspect them outside the tool**
+
+- *File*: plain text, one `NAME=value` per line, user-only. Comments and unrelated
+  lines are preserved when entries change. Back it up like any credential file, or do
+  not: treat the secrets manager as the source of truth and the file as a local cache.
+- *Windows Credential Manager* (`keyring`): Generic credentials named
+  named after the variable and the service `vps-deployer` (typically
+  `NAME@vps-deployer`; the exact form depends on the keyring version) under Windows
+  Credentials. View or edit them in Control Panel
+  (`control /name Microsoft.CredentialManager`); `cmdkey /list | findstr vps-deployer`
+  lists them. macOS Keychain and the Linux Secret Service use the same service name,
+  `vps-deployer`.
+- The credential store cannot be enumerated portably, so `list` shows keyring
+  entries only for variables the manifests reference.
+
+**What this does and does not protect**
+
+Stores are per user and per machine. They keep secrets out of persistent environment
+variables and out of process listings, but any process running as you can read them,
+the same as User environment variables. They are not shared or backed up across
+machines. Rotate a secret at its source (the provider), update the password manager,
+then run `rotate` here on each machine that deploys.
+
 ## Validate and inspect
 
 ```powershell

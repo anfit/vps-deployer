@@ -136,6 +136,33 @@ class SecretResolver:
             return "OS credential store"
         raise ConfigError("secrets can be stored in 'file' or 'keyring'")
 
+    def remove(self, source: str, name: str) -> bool:
+        """Delete `name` from `file` or `keyring`; returns whether anything was removed."""
+        if source == "file":
+            path = self.file_path or default_secrets_file(self.environ)
+            removed = _remove_file_value(path, name) if path.is_file() else False
+            self._file_cache = None
+            return removed
+        if source == "keyring":
+            return _keyring_delete(name)
+        raise ConfigError("secrets can be removed from 'file' or 'keyring'")
+
+    def holders(self, name: str) -> list[str]:
+        """Every configured source that holds `name` (not only the winning one)."""
+        found = []
+        for source in self.sources:
+            try:
+                if self._from(source, name) is not None:
+                    found.append(source)
+            except ConfigError:
+                if source != "keyring":
+                    raise
+        return found
+
+    def file_names(self) -> list[str]:
+        """Names stored in the secrets file (the keyring cannot be enumerated portably)."""
+        return sorted(self._file_values())
+
 
 def _keyring_module():
     try:
@@ -150,6 +177,36 @@ def _keyring_get(name: str) -> str | None:
     return _keyring_module().get_password(KEYRING_SERVICE, name)
 
 
+def _keyring_delete(name: str) -> bool:
+    module = _keyring_module()
+    try:
+        module.delete_password(KEYRING_SERVICE, name)
+    except Exception as exc:  # keyring.errors.PasswordDeleteError when absent
+        if type(exc).__name__ == "PasswordDeleteError":
+            return False
+        raise
+    return True
+
+
+def _line_name(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.startswith("export "):
+        stripped = stripped[len("export "):].lstrip()
+    return stripped.partition("=")[0].strip()
+
+
+def _remove_file_value(path: Path, name: str) -> bool:
+    _check_private(path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept = [line for line in lines if _line_name(line) != name]
+    if len(kept) == len(lines):
+        return False
+    _atomic_write(path, kept)
+    return True
+
+
 def _write_file_value(path: Path, name: str, value: str) -> None:
     if not name.replace("_", "").isalnum() or name[0].isdigit():
         raise ConfigError(f"invalid secret variable name: {name}")
@@ -160,18 +217,19 @@ def _write_file_value(path: Path, name: str, value: str) -> None:
     entry = f"{name}={value}"
     replaced = False
     for index, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if stripped.partition("=")[0].strip() == name and not stripped.startswith("#"):
+        if _line_name(line) == name:
             lines[index] = entry
             replaced = True
     if not replaced:
         lines.append(entry)
+    _atomic_write(path, lines)
+
+
+def _atomic_write(path: Path, lines: list) -> None:
     descriptor, temporary = tempfile.mkstemp(prefix=".secrets-", dir=str(path.parent))
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write("\n".join(lines) + "\n")
+            stream.write("\n".join(lines) + "\n" if lines else "")
         if os.name != "nt":
             os.chmod(temporary, 0o600)
         os.replace(temporary, path)

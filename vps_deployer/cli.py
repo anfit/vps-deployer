@@ -35,6 +35,13 @@ def parser() -> argparse.ArgumentParser:
     sset = ss.add_parser("set", help="store a secret value in the user secrets file or OS credential store")
     sset.add_argument("name"); sset.add_argument("--store", choices=("file", "keyring"), default="file")
     sset.add_argument("--stdin", action="store_true", help="read the value from standard input")
+    slist = ss.add_parser("list", help="show every source holding each secret, plus unreferenced file entries")
+    slist.add_argument("deployment", nargs="?")
+    sunset = ss.add_parser("unset", help="delete a stored secret from the user secrets file or OS credential store")
+    sunset.add_argument("name"); sunset.add_argument("--store", choices=("file", "keyring"), default="file")
+    srot = ss.add_parser("rotate", help="store a new value and list the deployments that need an apply")
+    srot.add_argument("name"); srot.add_argument("--store", choices=("file", "keyring"), default="file")
+    srot.add_argument("--stdin", action="store_true", help="read the value from standard input")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
     hb = hs.add_parser("bootstrap", help="print (or --install) the gate setup for a host")
@@ -97,6 +104,62 @@ def _secrets_set(args) -> int:
     if resolver.where(args.name) not in (args.store,):
         print(f"note: {args.name} is currently supplied by {resolver.where(args.name)}, which takes precedence", file=sys.stderr)
     return 0
+
+
+def _users_of(name: str, repo) -> list:
+    if repo is None: return []
+    return sorted(d.name for d in repo.deployments.values()
+                  if any(str(r.from_env) == name for r in d.secrets.values()))
+
+
+def _optional_repo(args):
+    try: return _repo(args)
+    except (ConfigError, OSError, KeyError): return None
+
+
+def _secrets_unset(args) -> int:
+    from .secret_sources import SecretResolver
+    resolver = SecretResolver.from_environment()
+    if not resolver.remove(args.store, args.name):
+        print(f"{args.name} was not stored in {args.store}; nothing removed"); return 1
+    print(f"Removed {args.name} from {args.store}")
+    remaining = resolver.holders(args.name)
+    if remaining:
+        print(f"note: {args.name} is still supplied by {', '.join(remaining)}", file=sys.stderr)
+    users = _users_of(args.name, _optional_repo(args))
+    if users and not remaining:
+        print(f"warning: now unset; used by {', '.join(users)}", file=sys.stderr)
+    return 0
+
+
+def _secrets_rotate(args) -> int:
+    rc = _secrets_set(args)
+    users = _users_of(args.name, _optional_repo(args))
+    if users:
+        print("apply to pick up the new value: " + ", ".join(users))
+    else:
+        print("no deployment in this repository references it")
+    return rc
+
+
+def _secrets_list(repo, args) -> int:
+    resolver = repo.resolver()
+    print(f"sources (in order): {', '.join(resolver.sources)}")
+    targets = [_dep(repo, args.deployment)] if args.deployment else list(repo.deployments.values())
+    users = {}
+    for dep in targets:
+        for ref in dep.secrets.values():
+            users.setdefault(str(ref.from_env), []).append(dep.name)
+    rows = [(name, ", ".join(resolver.holders(name)) or "UNSET", ", ".join(sorted(deps)))
+            for name, deps in sorted(users.items())]
+    if rows: print(_table(("variable", "held in", "used by"), rows))
+    if not args.deployment and "file" in resolver.sources:
+        referenced = {str(r.from_env) for d in repo.deployments.values() for r in d.secrets.values()}
+        stray = [n for n in resolver.file_names() if n not in referenced]
+        if stray: print("\nin the secrets file but referenced by no deployment: " + ", ".join(stray))
+    if "keyring" in resolver.sources:
+        print("\nnote: the OS credential store cannot be listed; see docs/operations.md")
+    return 1 if any(r[1] == "UNSET" for r in rows) else 0
 
 
 def _secrets_sources(repo, args) -> int:
@@ -233,6 +296,10 @@ def run(args) -> int:
         print(f"\n{errors} error(s), {warns} warning(s)"); return 1 if errors else 0
     if args.command == "secrets" and args.secrets_command == "set":
         return _secrets_set(args)
+    if args.command == "secrets" and args.secrets_command == "unset":
+        return _secrets_unset(args)
+    if args.command == "secrets" and args.secrets_command == "rotate":
+        return _secrets_rotate(args)
     repo = _repo(args)
     if args.command == "list":
         print(render_listing(repo, args.format)); return 0
@@ -245,6 +312,8 @@ def run(args) -> int:
         print(f"Valid: {args.deployment or f'{len(repo.hosts)} host(s), {len(repo.deployments)} deployment(s)'}"); return 0
     if args.command == "secrets" and args.secrets_command == "sources":
         return _secrets_sources(repo, args)
+    if args.command == "secrets" and args.secrets_command == "list":
+        return _secrets_list(repo, args)
     if args.command == "secrets":
         targets = [_dep(repo, args.deployment)] if args.deployment else list(repo.deployments.values())
         status = 0
