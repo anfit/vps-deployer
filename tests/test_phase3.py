@@ -73,3 +73,15 @@ def test_activate_action_flags_reversed_manual_rollback(tmp_path, monkeypatch):
     assert "manual rollback" in str(rec._activate_action("old"))
     monkeypatch.setattr(rec, "previous_release", lambda: "old")
     assert str(rec._activate_action("old")) == "ACTIVATE release new"
+
+
+def test_bootstrap_install_failure_prints_manual_steps(monkeypatch, capsys):
+    from vps_deployer.remote import RemoteError
+    def boom(self, *a, **k): raise RemoteError("sudo: a password is required")
+    monkeypatch.setattr(RemoteHost, "run", boom)
+    monkeypatch.setenv("VPS_DEPLOYER_DIR", str(ROOT))
+    with pytest.raises(SystemExit) as exc:
+        main(["--repo", str(ROOT / "examples"), "host", "bootstrap", next(iter(Repository.load(ROOT / "examples").hosts)), "--install"])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "scp" in err and "sudo install" in err and "password" in err

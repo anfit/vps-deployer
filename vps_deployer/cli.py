@@ -212,8 +212,11 @@ def run(args) -> int:
             if args.install:
                 sudo_host = dataclasses.replace(host, ssh=dataclasses.replace(host.ssh, privileged_host=None))
                 direct = RemoteHost(sudo_host, args.verbose)
-                direct.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
-                direct.write_file(bootstrap.GATE_INSTALL_PATH, bootstrap.gate_source(), "0755", "root", "root")
+                try:
+                    direct.run(["install", "-d", "-o", "root", "-g", "root", "-m", "0755", host.managed_root, "/etc/vps-deployer"], sudo=True)
+                    direct.write_file(bootstrap.GATE_INSTALL_PATH, bootstrap.gate_source(), "0755", "root", "root")
+                except RemoteError as exc:
+                    print(f"\nerror: {exc}\n{bootstrap.manual_install_hint(host)}", file=sys.stderr); return 1
                 print(f"\nInstalled {bootstrap.GATE_INSTALL_PATH} and onboarded {host.name}")
             return 0
         if args.host_command == "inspect":

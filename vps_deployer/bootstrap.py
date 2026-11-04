@@ -10,6 +10,18 @@ def gate_source() -> bytes:
     return resources.files("vps_deployer").joinpath("data/vps-deployer-ssh-gate").read_bytes()
 
 
+def gate_local_path() -> str:
+    return str(resources.files("vps_deployer").joinpath("data/vps-deployer-ssh-gate"))
+
+
+def manual_install_hint(host) -> str:
+    target = f"{host.ssh.user}@{host.ssh.host}" if host.ssh.user else host.ssh.host
+    return (f"Automatic install needs passwordless sudo on {host.name}. Install by hand:\n"
+            f"  scp \"{gate_local_path()}\" {target}:/tmp/vps-deployer-ssh-gate\n"
+            f"  ssh -t {target} \"sudo install -o root -g root -m 0755 "
+            f"/tmp/vps-deployer-ssh-gate {GATE_INSTALL_PATH} && rm /tmp/vps-deployer-ssh-gate\"")
+
+
 def storage_paths(repo, host_name: str) -> list[str]:
     """Storage paths of every deployment on the host, for the gate's --storage policy."""
     paths = {s.path for dep in repo.deployments.values() if dep.host == host_name for s in dep.storage}
