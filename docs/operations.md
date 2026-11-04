@@ -50,6 +50,33 @@ permissions.
 implicit host expectations without changing the host. `plan` and `apply` enforce
 the same preflight automatically.
 
+## Scaffold and preflight
+
+```powershell
+& $deployer init ./infra                 # new infrastructure repository skeleton
+& $deployer init app ./my-service        # .deployer/ skeleton for an application
+& $deployer doctor ./my-service          # offline checks; exit 1 on errors
+```
+
+`init` never overwrites existing files. `doctor` verifies the application
+contract without touching a host: entrypoint scripts have an LF-ended `#!` line,
+`expect.yaml` parses, an ignore file exists, no credential-like file would be
+uploaded, and (when the infra repository is found) manifests pointing at the
+application find their runtime entrypoint. Warnings do not fail the command.
+
+## Inventory and fleet commands
+
+```powershell
+& $deployer list                        # offline table of every deployment
+& $deployer list --format markdown      # includes storage and secret variable names
+& $deployer status --all                # one health row per deployment (needs SSH)
+& $deployer plan --all --exit-code      # exit 1 if any deployment has changes
+```
+
+`list` reads manifests only. A repository's `docs/services.md` can embed the
+markdown form between generated markers (see service-infra-template's
+`tools/update-services-doc.py`) so the inventory cannot drift.
+
 ## Plan and apply
 
 ```powershell

@@ -12,6 +12,8 @@ from .models import ConfigError
 from .remote import RemoteError, RemoteHost
 from .systemd import timer_name, unit_name
 from .expectations import evaluate_expectations
+from .doctor import ERROR, WARN, diagnose
+from .scaffold import init_app, init_infra
 
 
 def parser() -> argparse.ArgumentParser:
@@ -28,8 +30,21 @@ def parser() -> argparse.ArgumentParser:
     ss.add_parser("check", help="list unset secret variables by name").add_argument("deployment", nargs="?")
     host = sub.add_parser("host"); hs = host.add_subparsers(dest="host_command", required=True)
     for name in ("inspect", "onboard"): hs.add_parser(name).add_argument("host")
+    ini = sub.add_parser("init", help="scaffold an infra repository, or `init app` for an application")
+    ini.add_argument("target", nargs="*", help="[DIR] or: app [DIR]")
+    doc = sub.add_parser("doctor", help="offline preflight of an application's .deployer contract")
+    doc.add_argument("app", nargs="?", type=Path, default=Path("."))
+    lst = sub.add_parser("list", help="list deployments from the manifests (offline)")
+    lst.add_argument("--format", choices=("table", "markdown"), default="table")
     for name in ("check", "plan", "apply", "status", "logs", "rollback", "remove"):
-        cmd = sub.add_parser(name); cmd.add_argument("deployment")
+        cmd = sub.add_parser(name)
+        if name in ("plan", "status"):
+            cmd.add_argument("deployment", nargs="?")
+            cmd.add_argument("--all", action="store_true", help="every deployment")
+        else:
+            cmd.add_argument("deployment")
+        if name == "plan":
+            cmd.add_argument("--exit-code", action="store_true", help="exit 1 when any change is planned")
         if name in ("plan", "apply"): cmd.add_argument("--release-id")
         if name == "apply": cmd.add_argument("--allow-privileged", action="store_true")
         if name == "remove": cmd.add_argument("--allow-privileged", action="store_true")
@@ -67,8 +82,109 @@ def _dep(repo, name):
 def _remote(repo, dep, verbose): return RemoteHost(repo.hosts[dep.host], verbose)
 
 
+def _kind(dep) -> str:
+    return "command" if dep.executable else ("timer" if dep.timer else "service")
+
+
+def _ingress(dep) -> str:
+    if dep.http_proxy: return dep.http_proxy.domain
+    if dep.healthcheck: return dep.healthcheck["url"].split("/", 3)[2]
+    return "-"
+
+
+def _table(header, rows) -> str:
+    widths = [max(len(x) for x in col) for col in zip(header, *rows)] if rows else [len(h) for h in header]
+    line = lambda r: "  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip()
+    return "\n".join([line(header)] + [line(r) for r in rows])
+
+
+def render_listing(repo, fmt: str) -> str:
+    deps = _sorted_deployments(repo)
+    if fmt == "markdown":
+        header = ("deployment", "host", "kind", "user", "ingress", "storage", "secret variables")
+        lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+        for d in deps:
+            storage = ", ".join(f"`{s.path}`" for s in d.storage) or "none"
+            secrets = ", ".join(f"`{ref.from_env}`" for ref in d.secrets.values()) or "none"
+            cells = (f"`{d.name}`", f"`{d.host}`", _kind(d), f"`{d.user}`", _ingress(d), storage, secrets)
+            lines.append("| " + " | ".join(cells) + " |")
+        return "\n".join(lines)
+    rows = [(d.name, d.host, _kind(d), d.user, _ingress(d), str(len(d.secrets))) for d in deps]
+    return _table(("deployment", "host", "kind", "user", "ingress", "secrets"), rows)
+
+
+def _status_info(repo, dep, remote) -> dict:
+    unit = unit_name(dep); supervisor = timer_name(dep) if dep.timer else unit
+    rec = Reconciler(repo, dep, remote, "status")
+    active = rec.active_release()
+    service = (None if dep.executable else remote.run(["systemctl", "is-active", supervisor], sudo=True, check=False))
+    desired = release_id(dep)
+    manifest = rec.release_manifest() if active else {}
+    metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
+    desired_commit, _ = git_metadata(metadata_source, desired)
+    manifest_ok = manifest.get("deployment.release") == desired and (not desired_commit or manifest.get("deployment.commit") == desired_commit)
+    healthy = (dep.executable is not None or service.returncode == 0) and rec._healthy() and manifest_ok
+    return dict(active=active, service=service, desired=desired, manifest=manifest,
+                desired_commit=desired_commit, manifest_ok=manifest_ok, healthy=healthy)
+
+
+def _sorted_deployments(repo):
+    return sorted(repo.deployments.values(), key=lambda d: (d.host, d.name))
+
+
+def _status_all(repo, args) -> int:
+    rows, failed = [], False
+    for dep in _sorted_deployments(repo):
+        try:
+            info = _status_info(repo, dep, _remote(repo, dep, args.verbose))
+            commit = (info["manifest"].get("deployment.commit") or "-")[:8]
+            rows.append((dep.name, dep.host, _kind(dep), "healthy" if info["healthy"] else "unhealthy",
+                         str(info["active"] or "none")[:16], commit))
+            failed |= not info["healthy"]
+        except (ConfigError, RemoteError, RuntimeError) as exc:
+            rows.append((dep.name, dep.host, _kind(dep), "error", "-", str(exc).splitlines()[0][:60])); failed = True
+    print(_table(("deployment", "host", "kind", "health", "active release", "commit"), rows))
+    return 1 if failed else 0
+
+
+def _plan_all(repo, args) -> int:
+    changed = errors = 0
+    for dep in _sorted_deployments(repo):
+        print(f"== {dep.name} ({dep.host})")
+        try:
+            missing = repo.missing_secrets(dep)
+            if missing: print(f"warning: {_missing_secrets_message(dep, missing)}", file=sys.stderr)
+            actions = Reconciler(repo, dep, _remote(repo, dep, args.verbose), release_id(dep, None)).plan(False)
+            print("\n".join(map(str, actions)) if actions else "No changes."); changed += bool(actions)
+        except (ConfigError, RemoteError, RuntimeError) as exc:
+            print(f"error: {exc}"); errors += 1
+    print(f"\n{len(repo.deployments)} deployment(s): {changed} with changes, {errors} error(s)")
+    return 2 if errors else (1 if changed and args.exit_code else 0)
+
+
 def run(args) -> int:
+    if args.command == "init":
+        target = list(args.target)
+        if target and target[0] == "app":
+            actions = init_app(Path(target[1]) if len(target) > 1 else Path.cwd())
+        else:
+            actions = init_infra(Path(target[0]) if target else Path.cwd())
+        print("\n".join(actions)); return 0
+    if args.command == "doctor":
+        try: doctor_repo = Repository.load(resolve_repo_path(args.repo))
+        except (ConfigError, OSError, KeyError): doctor_repo = None
+        findings = diagnose(args.app, doctor_repo)
+        for f in findings:
+            print(f"{f.level.upper():5} {f.subject}: {f.detail}")
+        errors = sum(f.level == ERROR for f in findings); warns = sum(f.level == WARN for f in findings)
+        print(f"\n{errors} error(s), {warns} warning(s)"); return 1 if errors else 0
     repo = _repo(args)
+    if args.command == "list":
+        print(render_listing(repo, args.format)); return 0
+    if args.command in {"plan", "status"}:
+        if args.all and args.deployment: raise ConfigError(f"{args.command}: give a deployment or --all, not both")
+        if args.all: return _status_all(repo, args) if args.command == "status" else _plan_all(repo, args)
+        if not args.deployment: raise ConfigError(f"{args.command}: a deployment name or --all is required")
     if args.command == "validate":
         if args.deployment: _dep(repo, args.deployment)
         print(f"Valid: {args.deployment or f'{len(repo.hosts)} host(s), {len(repo.deployments)} deployment(s)'}"); return 0
@@ -127,14 +243,9 @@ def run(args) -> int:
         print("\n".join(map(str, actions)) if actions else "No changes."); return 0
     unit = unit_name(dep); supervisor = timer_name(dep) if dep.timer else unit; rec = Reconciler(repo, dep, remote, "status")
     if args.command == "status":
-        active = rec.active_release()
-        service = (None if dep.executable else remote.run(["systemctl", "is-active", supervisor], sudo=True, check=False))
-        desired = release_id(dep)
-        manifest = rec.release_manifest() if active else {}
-        metadata_source = dep.source if dep.source.is_dir() else dep.source.parent
-        desired_commit, _ = git_metadata(metadata_source, desired)
-        manifest_ok = manifest.get("deployment.release") == desired and (not desired_commit or manifest.get("deployment.commit") == desired_commit)
-        healthy = (dep.executable is not None or service.returncode == 0) and rec._healthy() and manifest_ok
+        info = _status_info(repo, dep, remote)
+        active, service, desired, manifest = info["active"], info["service"], info["desired"], info["manifest"]
+        desired_commit, manifest_ok, healthy = info["desired_commit"], info["manifest_ok"], info["healthy"]
         health = "healthy" if healthy else "unhealthy"
         supervisor_label = "executable" if dep.executable else ("timer" if dep.timer else "service")
         supervisor_status = f"/usr/local/bin/{dep.executable}" if dep.executable else (service.stdout.strip() or "unknown")

@@ -90,8 +90,14 @@ vps-deployer --repo ./examples secrets check     # reports unset secret variable
 ```
 
 `plan`, `apply`, and `status` connect to the host in `examples/hosts/prod.yaml`
-(an SSH alias you must replace). To start your own infrastructure repository,
-use [service-infra-template](https://github.com/anfit/service-infra-template).
+(an SSH alias you must replace). To start your own infrastructure repository, run `vps-deployer init DIR`, or use
+[service-infra-template](https://github.com/anfit/service-infra-template) for a
+fuller starting point with an operator guide. To prepare an application:
+
+```console
+vps-deployer init app ./my-service     # writes .deployer/run.sh, ignore.txt, expect.yaml, .gitattributes
+vps-deployer doctor ./my-service       # CRLF/shebang, credential-like files, contract syntax
+```
 
 Detailed documentation:
 
@@ -175,14 +181,18 @@ release directories are pruned. Failed deployments do not trigger cleanup.
 
 ```console
 vps-deployer --version
+vps-deployer init [DIR]                 # scaffold an infra repository
+vps-deployer init app [DIR]             # scaffold an application's .deployer/ contract
+vps-deployer doctor [APP_DIR]           # offline preflight of an application
 vps-deployer validate
+vps-deployer list [--format markdown]   # inventory from the manifests (offline)
 vps-deployer secrets check [DEPLOYMENT]
 vps-deployer check DEPLOYMENT
 vps-deployer host inspect HOST
 vps-deployer host onboard HOST
-vps-deployer plan DEPLOYMENT
+vps-deployer plan DEPLOYMENT|--all [--exit-code]
 vps-deployer apply DEPLOYMENT
-vps-deployer status DEPLOYMENT
+vps-deployer status DEPLOYMENT|--all
 vps-deployer logs DEPLOYMENT
 vps-deployer rollback DEPLOYMENT
 vps-deployer remove DEPLOYMENT
